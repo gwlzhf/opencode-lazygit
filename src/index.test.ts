@@ -118,6 +118,15 @@ function createSource(): ReviewSource {
     preview: async () => {
       throw new Error("not used by entry tests");
     },
+    history: async () => {
+      throw new Error("not used by entry tests");
+    },
+    commitDiff: async () => {
+      throw new Error("not used by entry tests");
+    },
+    watch: async () => {
+      throw new Error("not used by entry tests");
+    },
   };
 }
 

@@ -2,11 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { join, resolve } from "node:path";
 import type {
   ChangeRecord,
+  CommitDiffPreview,
   FilePreview,
+  GitLogSnapshot,
   ProjectSnapshot,
   StatusCode,
 } from "./contracts";
-import type { RepositoryInspection } from "./git/repository";
+import type { GitRepository, RepositoryInspection } from "./git/repository";
 import { BaselineStore } from "./model/baseline";
 import {
   clearSessionBaselines,
@@ -56,14 +58,36 @@ interface FakeGit {
   inspect(signal: AbortSignal): Promise<RepositoryInspection>;
   contentHash(path: string, signal: AbortSignal): Promise<string | null>;
   preview(path: string, signal: AbortSignal): Promise<FilePreview>;
+  history(signal: AbortSignal): Promise<GitLogSnapshot>;
+  commitDiff(
+    oid: string,
+    signal: AbortSignal,
+    contextLines?: number,
+  ): Promise<CommitDiffPreview>;
 }
+
+function unusedGitOperations(): Pick<FakeGit, "history" | "commitDiff"> {
+  return {
+    async history() {
+      throw new Error("Git history is not used by this test");
+    },
+    async commitDiff() {
+      throw new Error("Git commit diffs are not used by this test");
+    },
+  };
+}
+
+type FakeGitBackend = Pick<
+  GitRepository,
+  "inspect" | "contentHash" | "preview" | "history" | "commitDiff"
+>;
 
 function gitFactories(git: FakeGit, openCalls: string[]): ReviewSourceFactories {
   return {
     openGit: async (cwd, _runner, signal) => {
       signal.throwIfAborted();
       openCalls.push(cwd);
-      return git;
+      return git as FakeGitBackend;
     },
     createFilesystem: () => {
       throw new Error("filesystem fallback was not expected");
@@ -96,6 +120,115 @@ afterEach(() => {
   clearSessionBaselines();
 });
 
+test("Git-only operations delegate to a discovered Git backend and watch its repository root", async () => {
+  const cwd = resolve("repository-child");
+  const repositoryRoot = resolve("repository-root");
+  const oid = "0123456789abcdef";
+  const historyCalls: AbortSignal[] = [];
+  const diffCalls: Array<{ readonly oid: string; readonly signal: AbortSignal; readonly context: number | undefined }> = [];
+  const watchCalls: Array<{ readonly root: string; readonly options: unknown }> = [];
+  const history = {
+    entries: [{
+      oid,
+      shortOid: oid.slice(0, 7),
+      subject: "Add history",
+      author: "Ada",
+      authoredAt: 1_700_000_000,
+    }],
+    truncated: false,
+  };
+  const commitPreview = {
+    oid,
+    kind: "diff" as const,
+    lines: ["diff --git a/file.ts b/file.ts"],
+    truncated: false,
+  };
+  const git: FakeGit & Pick<GitRepository, "history" | "commitDiff"> = {
+    async inspect(receivedSignal) {
+      receivedSignal.throwIfAborted();
+      return inspection(repositoryRoot, [], new Map());
+    },
+    async contentHash(_path, receivedSignal) {
+      receivedSignal.throwIfAborted();
+      return null;
+    },
+    async preview(path, receivedSignal) {
+      receivedSignal.throwIfAborted();
+      return preview(path);
+    },
+    async history(receivedSignal) {
+      historyCalls.push(receivedSignal);
+      return history;
+    },
+    async commitDiff(receivedOid, receivedSignal, context) {
+      diffCalls.push({ oid: receivedOid, signal: receivedSignal, context });
+      return commitPreview;
+    },
+  };
+  const source = new ProjectReviewSource(
+    cwd,
+    new BaselineStore(),
+    undefined,
+    {
+      ...gitFactories(git, []),
+      async watchGit(root, options) {
+        watchCalls.push({ root, options });
+      },
+    },
+  );
+  const historySignal = new AbortController().signal;
+  const previewSignal = new AbortController().signal;
+  const watchOptions = {
+    signal: new AbortController().signal,
+    onChange() {},
+    onError() {},
+  };
+
+  expect(await source.history({ signal: historySignal })).toBe(history);
+  expect(await source.commitDiff(oid, { signal: previewSignal, diffContext: 25 })).toBe(commitPreview);
+  await source.watch(watchOptions);
+
+  expect(historyCalls).toEqual([historySignal]);
+  expect(diffCalls).toEqual([{ oid, signal: previewSignal, context: 25 }]);
+  expect(watchCalls).toEqual([{ root: repositoryRoot, options: watchOptions }]);
+});
+
+test("Git-only operations reject for a discovered filesystem backend without starting a watcher", async () => {
+  const root = resolve("filesystem-git-only-operations");
+  let discoveryCalls = 0;
+  const watchCalls: unknown[] = [];
+  const source = new ProjectReviewSource(
+    root,
+    new BaselineStore(),
+    undefined,
+    {
+      async openGit() {
+        discoveryCalls += 1;
+        return undefined;
+      },
+      createFilesystem: () => ({
+        async inspect() {
+          return { allFiles: [], truncated: false };
+        },
+        async preview(path) {
+          return preview(path);
+        },
+      }),
+      async watchGit(_root, options) {
+        watchCalls.push(options);
+      },
+    },
+  );
+
+  await source.refresh({ signal });
+  await expect(source.history({ signal })).rejects.toThrow("Git repository");
+  await expect(source.commitDiff("not-a-commit", { signal })).rejects.toThrow("Git repository");
+  await expect(source.watch({ signal, onChange() {}, onError() {} })).rejects.toThrow("Git repository");
+
+  expect(discoveryCalls).toBe(1);
+  expect(watchCalls).toEqual([]);
+});
+
 test("prepareSessionBaseline is reused by refresh and preview delegates to the active Git backend", async () => {
   const root = resolve("prepared-repository");
   const preexisting = change("src/preexisting.ts", "M");
@@ -111,6 +244,7 @@ test("prepareSessionBaseline is reused by refresh and preview delegates to the a
   const hashCalls: string[] = [];
   const previewCalls: string[] = [];
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       inspectCalls.push(receivedSignal);
       return currentInspection;
@@ -168,6 +302,7 @@ test("first refresh in a repository establishes one baseline before returning se
   const hashCalls: string[] = [];
   let inspectCount = 0;
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       receivedSignal.throwIfAborted();
       inspectCount += 1;
@@ -267,6 +402,7 @@ test("refresh rediscovers Git and replaces the backend across filesystem and Git
   let discoveryCount = 0;
   let filesystemCount = 0;
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       receivedSignal.throwIfAborted();
       return gitInspection;
@@ -321,6 +457,7 @@ test("refresh replaces a cached Git backend when repository discovery reports a 
   const previewBackends: string[] = [];
   let discoveryCount = 0;
   const makeGit = (root: string, label: string): FakeGit => ({
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       receivedSignal.throwIfAborted();
       return inspection(root, [], new Map());
@@ -369,6 +506,7 @@ test("one aborted waiter does not cancel a shared baseline capture or another wa
   let inspected = 0;
   let hashCalls = 0;
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       receivedSignal.throwIfAborted();
       inspected += 1;
@@ -432,6 +570,7 @@ test("a refresh joining baseline capture compares changes inspected after captur
   const secondInspection = deferred<void>();
   let inspected = 0;
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect(receivedSignal) {
       receivedSignal.throwIfAborted();
       inspected += 1;
@@ -478,6 +617,7 @@ test("a live caller retries after a canceled shared capture", async () => {
   let hashCalls = 0;
   const canceled = new DOMException("capture canceled", "AbortError");
   const git: FakeGit = {
+    ...unusedGitOperations(),
     async inspect() {
       return currentInspection;
     },
@@ -517,6 +657,7 @@ test("clearSessionBaselines aborts and isolates an outstanding capture from the 
   let discoveryCount = 0;
   let hashCalls = 0;
   const staleGit: FakeGit = {
+    ...unusedGitOperations(),
     async inspect() {
       return currentInspection;
     },
@@ -530,6 +671,7 @@ test("clearSessionBaselines aborts and isolates an outstanding capture from the 
     },
   };
   const freshGit: FakeGit = {
+    ...unusedGitOperations(),
     async inspect() {
       return currentInspection;
     },
@@ -583,6 +725,7 @@ test("clearSessionBaselines clears the canonical source and baseline registries"
       receivedSignal.throwIfAborted();
       openCount += 1;
       return {
+        ...unusedGitOperations(),
         async inspect() {
           return currentInspection;
         },

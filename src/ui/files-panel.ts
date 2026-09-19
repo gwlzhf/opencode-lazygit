@@ -20,8 +20,11 @@ import {
   TREE_MIN_RATIO,
   type ChangeRecord,
   type ChangeScope,
+  type CommitDiffPreview,
   type DiffLayout,
   type FilePreview,
+  type GitLogEntry,
+  type GitLogSnapshot,
   type ProjectSnapshot,
   type ReviewSource,
   type ViewMode,
@@ -102,6 +105,8 @@ export interface FilesPanelOptions {
 
 type PanelFocus = "tree" | "preview";
 
+type LeftMode = "files" | "log";
+
 interface RenderCache {
   readonly width: number;
   readonly rows: number;
@@ -153,6 +158,7 @@ export class FilesPanel implements Component {
   readonly #highlight: Highlighter | undefined;
   readonly #done: (result: undefined) => void;
 
+  #leftMode: LeftMode = "files";
   #viewMode: ViewMode = "modified";
   #scope: ChangeScope = "workspace";
   #focus: PanelFocus = "tree";
@@ -165,13 +171,29 @@ export class FilesPanel implements Component {
   #preview: FilePreview | undefined;
   #previewPath: string | undefined;
   #previewLoading = false;
+  #history: GitLogSnapshot | undefined;
+  #historyLoading = false;
+  #historyError: string | undefined;
+  #historyController: AbortController | undefined;
+  #historyGeneration = 0;
+  #logSelectedIndex = -1;
+  #logOffset = 0;
+  #commitDiff: CommitDiffPreview | undefined;
+  #commitDiffLoading = false;
+  #commitDiffController: AbortController | undefined;
+  #commitDiffGeneration = 0;
   #previewScroll = 0;
   #refreshLoading = false;
   #refreshError: string | undefined;
+  #watchError: string | undefined;
   #refreshController: AbortController | undefined;
   #previewController: AbortController | undefined;
+  #watchController: AbortController | undefined;
   #refreshGeneration = 0;
   #previewGeneration = 0;
+  #watchGeneration = 0;
+  #refreshTimer: NodeJS.Timeout | undefined;
+  #refreshQueued = false;
   #treeRatio: number;
   #treeCollapsed: boolean;
   #diffLayout: DiffLayout;
@@ -186,7 +208,7 @@ export class FilesPanel implements Component {
   #selectionDrag = false;
   #copyNotice: string | undefined;
   #diffRows: {
-    readonly preview: FilePreview;
+    readonly preview: FilePreview | CommitDiffPreview;
     readonly rows: readonly DiffRow[] | undefined;
   } | undefined;
   #highlighted: {
@@ -229,7 +251,7 @@ export class FilesPanel implements Component {
   start(): void {
     if (this.#started || this.#disposed || this.#doneCalled) return;
     this.#started = true;
-    this.#beginRefresh();
+    this.#queueRefresh();
   }
 
   handleInput(data: string): void {
@@ -248,7 +270,8 @@ export class FilesPanel implements Component {
       return;
     }
     if (matchesKey(data, "f5") || matchesKey(data, "r")) {
-      this.#beginRefresh();
+      // Queued rather than immediate: watching can have a refresh in flight.
+      this.#queueRefresh();
       return;
     }
 
@@ -292,6 +315,10 @@ export class FilesPanel implements Component {
       this.#highlighted = undefined;
       this.#onHighlightThemeChange?.(this.#highlightTheme);
       this.#requestRender();
+      return;
+    }
+    if (matchesKey(data, "g")) {
+      this.#toggleLeftMode();
       return;
     }
 
@@ -362,16 +389,49 @@ export class FilesPanel implements Component {
     this.#previewRows = [];
     this.#refreshGeneration += 1;
     this.#previewGeneration += 1;
+    this.#historyGeneration += 1;
+    this.#commitDiffGeneration += 1;
+    this.#watchGeneration += 1;
+    if (this.#refreshTimer !== undefined) {
+      clearTimeout(this.#refreshTimer);
+    }
+    this.#refreshTimer = undefined;
+    this.#refreshQueued = false;
     this.#refreshController?.abort();
     this.#previewController?.abort();
+    this.#historyController?.abort();
+    this.#commitDiffController?.abort();
+    this.#watchController?.abort();
     this.#refreshController = undefined;
     this.#previewController = undefined;
+    this.#historyController = undefined;
+    this.#commitDiffController = undefined;
+    this.#watchController = undefined;
     this.#highlighted = undefined;
     this.#diffRows = undefined;
     this.#cache = undefined;
   }
 
   #handleTreeInput(data: string): void {
+    if (this.#leftMode === "log") {
+      if (matchesKey(data, "up") || matchesKey(data, "k")) {
+        this.#moveLogSelection(-1);
+        return;
+      }
+      if (matchesKey(data, "down") || matchesKey(data, "j")) {
+        this.#moveLogSelection(1);
+        return;
+      }
+      if (
+        matchesKey(data, "enter")
+        || matchesKey(data, "right")
+        || matchesKey(data, "l")
+      ) {
+        this.#focus = "preview";
+        this.#requestRender();
+      }
+      return;
+    }
     if (matchesKey(data, "a")) {
       if (this.#snapshot?.kind === "git" && this.#viewMode !== "all") {
         this.#viewMode = "all";
@@ -453,12 +513,12 @@ export class FilesPanel implements Component {
     this.#clearSelection();
     this.#diffContext = nextDiffContext(this.#diffContext);
     this.#onDiffContextChange?.(this.#diffContext);
-    const path = this.#previewPath;
-    if (path === undefined) {
-      this.#requestRender();
-      return;
+    if (this.#leftMode === "log") {
+      const entry = this.#selectedLogEntry();
+      if (entry !== undefined) this.#beginCommitDiff(entry.oid, true);
+    } else if (this.#previewPath !== undefined) {
+      this.#beginPreview(this.#previewPath, true);
     }
-    this.#beginPreview(path, true);
     this.#requestRender();
   }
 
@@ -618,14 +678,41 @@ export class FilesPanel implements Component {
     return Math.max(1, Math.max(3, Math.floor(this.#tui.terminal.rows)) - 2);
   }
 
-  #beginRefresh(): void {
+  #queueRefresh(debounce = false): void {
     if (this.#disposed || this.#doneCalled) return;
+    if (debounce) {
+      if (this.#refreshTimer !== undefined) clearTimeout(this.#refreshTimer);
+      this.#refreshTimer = setTimeout(() => {
+        this.#refreshTimer = undefined;
+        this.#startQueuedRefresh();
+      }, 150);
+      return;
+    }
+    if (this.#refreshTimer !== undefined) clearTimeout(this.#refreshTimer);
+    this.#refreshTimer = undefined;
+    this.#startQueuedRefresh();
+  }
+
+  #startQueuedRefresh(): void {
+    if (this.#disposed || this.#doneCalled) return;
+    if (this.#refreshController !== undefined) {
+      this.#refreshQueued = true;
+      return;
+    }
+    this.#beginRefresh();
+  }
+
+  #beginRefresh(): void {
+    if (this.#disposed || this.#doneCalled || this.#refreshController !== undefined) return;
     const generation = ++this.#refreshGeneration;
-    this.#refreshController?.abort();
-    this.#previewController?.abort();
-    this.#previewGeneration += 1;
-    this.#previewController = undefined;
-    this.#previewLoading = false;
+    if (this.#leftMode === "log") {
+      this.#cancelCommitDiff();
+    } else {
+      this.#previewGeneration += 1;
+      this.#previewController?.abort();
+      this.#previewController = undefined;
+      this.#previewLoading = false;
+    }
     const controller = new AbortController();
     this.#refreshController = controller;
     this.#refreshLoading = true;
@@ -638,8 +725,17 @@ export class FilesPanel implements Component {
         this.#refreshController = undefined;
         this.#refreshLoading = false;
         this.#snapshot = project;
-        this.#rebuildRows(true);
+        if (project.kind === "git") {
+          this.#installWatch();
+          if (this.#leftMode === "log") this.#beginHistory();
+          else this.#rebuildRows(true);
+        } else {
+          this.#stopWatch();
+          if (this.#leftMode === "log") this.#leftMode = "files";
+          this.#rebuildRows(true);
+        }
         this.#requestRender();
+        this.#runCoalescedRefresh();
       },
       error => {
         if (!this.#isCurrentRefresh(generation, controller) || isAbort(error, controller.signal)) return;
@@ -647,12 +743,181 @@ export class FilesPanel implements Component {
         this.#refreshLoading = false;
         this.#refreshError = errorMessage(error);
         this.#requestRender();
+        this.#runCoalescedRefresh();
       },
     );
   }
 
+  #runCoalescedRefresh(): void {
+    if (!this.#refreshQueued) return;
+    this.#refreshQueued = false;
+    this.#beginRefresh();
+  }
+
   #isCurrentRefresh(generation: number, controller: AbortController): boolean {
     return !this.#disposed && generation === this.#refreshGeneration && this.#refreshController === controller;
+  }
+
+  #installWatch(): void {
+    if (this.#watchController !== undefined || this.#disposed) return;
+    const generation = ++this.#watchGeneration;
+    const controller = new AbortController();
+    this.#watchController = controller;
+    void this.#source.watch({
+      signal: controller.signal,
+      onChange: () => {
+        if (!this.#isCurrentWatch(generation, controller)) return;
+        this.#queueRefresh(true);
+      },
+      onError: error => this.#setWatchError(error, generation, controller),
+    }).catch(error => this.#setWatchError(error, generation, controller));
+  }
+
+  #stopWatch(): void {
+    this.#watchGeneration += 1;
+    this.#watchController?.abort();
+    this.#watchController = undefined;
+  }
+
+  #isCurrentWatch(generation: number, controller: AbortController): boolean {
+    return !this.#disposed && generation === this.#watchGeneration && this.#watchController === controller && !controller.signal.aborted;
+  }
+
+  #setWatchError(error: unknown, generation: number, controller: AbortController): void {
+    if (!this.#isCurrentWatch(generation, controller) || isAbort(error, controller.signal)) return;
+    this.#watchError = errorMessage(error);
+    this.#requestRender();
+  }
+
+  #toggleLeftMode(): void {
+    if (this.#snapshot?.kind !== "git") return;
+    if (this.#treeCollapsed) this.#setTreeCollapsed(false);
+    else this.#focus = "tree";
+    this.#previewScroll = 0;
+    if (this.#leftMode === "files") {
+      this.#leftMode = "log";
+      this.#cancelPreview();
+      this.#beginHistory();
+    } else {
+      this.#leftMode = "files";
+      this.#cancelHistory();
+      this.#cancelCommitDiff();
+      this.#rebuildRows(true);
+    }
+    this.#requestRender();
+  }
+
+  #beginHistory(): void {
+    if (this.#disposed || this.#snapshot?.kind !== "git") return;
+    const selectedOid = this.#selectedLogEntry()?.oid;
+    const generation = ++this.#historyGeneration;
+    this.#historyController?.abort();
+    const controller = new AbortController();
+    this.#historyController = controller;
+    this.#historyLoading = true;
+    this.#historyError = undefined;
+    void this.#source.history({ signal: controller.signal }).then(
+      history => {
+        if (!this.#isCurrentHistory(generation, controller)) return;
+        this.#historyController = undefined;
+        this.#historyLoading = false;
+        this.#history = history;
+        const restored = selectedOid === undefined ? -1 : history.entries.findIndex(entry => entry.oid === selectedOid);
+        this.#logSelectedIndex = history.entries.length === 0
+          ? -1
+          : restored >= 0
+            ? restored
+            : Math.min(Math.max(0, this.#logSelectedIndex), history.entries.length - 1);
+        this.#logOffset = Math.min(this.#logOffset, Math.max(0, history.entries.length - 1));
+        const entry = this.#selectedLogEntry();
+        if (entry !== undefined) this.#beginCommitDiff(entry.oid);
+        else this.#cancelCommitDiff();
+        this.#requestRender();
+      },
+      error => {
+        if (!this.#isCurrentHistory(generation, controller) || isAbort(error, controller.signal)) return;
+        this.#historyController = undefined;
+        this.#historyLoading = false;
+        this.#historyError = errorMessage(error);
+        this.#requestRender();
+      },
+    );
+  }
+
+  #isCurrentHistory(generation: number, controller: AbortController): boolean {
+    return !this.#disposed
+      && this.#leftMode === "log"
+      && generation === this.#historyGeneration
+      && this.#historyController === controller;
+  }
+
+  #cancelHistory(): void {
+    this.#historyGeneration += 1;
+    this.#historyController?.abort();
+    this.#historyController = undefined;
+    this.#historyLoading = false;
+  }
+
+  #moveLogSelection(delta: number): void {
+    const entries = this.#history?.entries;
+    if (entries === undefined || entries.length === 0) return;
+    const next = Math.max(0, Math.min(entries.length - 1, this.#logSelectedIndex + delta));
+    if (next === this.#logSelectedIndex) return;
+    this.#logSelectedIndex = next;
+    this.#previewScroll = 0;
+    const entry = entries[next];
+    if (entry !== undefined) this.#beginCommitDiff(entry.oid);
+    this.#requestRender();
+  }
+
+  #selectedLogEntry(): GitLogEntry | undefined {
+    return this.#logSelectedIndex < 0 ? undefined : this.#history?.entries[this.#logSelectedIndex];
+  }
+
+  #beginCommitDiff(oid: string, force = false): void {
+    if (
+      this.#disposed
+      || (!force && this.#commitDiff?.oid === oid && (this.#commitDiffLoading || this.#commitDiff !== undefined))
+    ) return;
+    const generation = ++this.#commitDiffGeneration;
+    this.#commitDiffController?.abort();
+    const controller = new AbortController();
+    this.#commitDiffController = controller;
+    this.#commitDiffLoading = true;
+    this.#commitDiff = undefined;
+    void this.#source.commitDiff(oid, { signal: controller.signal, diffContext: this.#diffContext }).then(
+      preview => {
+        if (!this.#isCurrentCommitDiff(generation, controller, oid)) return;
+        this.#commitDiffController = undefined;
+        this.#commitDiffLoading = false;
+        this.#commitDiff = preview.oid === oid ? preview : { ...preview, oid };
+        this.#previewScroll = 0;
+        this.#requestRender();
+      },
+      error => {
+        if (!this.#isCurrentCommitDiff(generation, controller, oid) || isAbort(error, controller.signal)) return;
+        this.#commitDiffController = undefined;
+        this.#commitDiffLoading = false;
+        this.#commitDiff = { oid, kind: "error", lines: [], truncated: false, error: errorMessage(error) };
+        this.#requestRender();
+      },
+    );
+  }
+
+  #isCurrentCommitDiff(generation: number, controller: AbortController, oid: string): boolean {
+    return !this.#disposed
+      && this.#leftMode === "log"
+      && generation === this.#commitDiffGeneration
+      && this.#commitDiffController === controller
+      && this.#selectedLogEntry()?.oid === oid;
+  }
+
+  #cancelCommitDiff(): void {
+    this.#commitDiffGeneration += 1;
+    this.#commitDiffController?.abort();
+    this.#commitDiffController = undefined;
+    this.#commitDiffLoading = false;
+    this.#commitDiff = undefined;
   }
 
   #activeChanges(): ReadonlyMap<string, ChangeRecord> {
@@ -682,11 +947,8 @@ export class FilesPanel implements Component {
     this.#selectedIndex = recoverSelection(this.#rows, previousPath, previousIndex);
     this.#treeOffset = Math.min(this.#treeOffset, Math.max(0, this.#rows.length - 1));
     const selected = this.#selectedRow();
-    if (selected?.node.kind === "file") {
-      this.#beginPreview(selected.node.path, forcePreview);
-    } else {
-      this.#cancelPreview();
-    }
+    if (selected?.node.kind === "file") this.#beginPreview(selected.node.path, forcePreview);
+    else this.#cancelPreview();
   }
 
   #selectedRow(): TreeRow | undefined {
@@ -694,6 +956,10 @@ export class FilesPanel implements Component {
   }
 
   #moveSelection(delta: number): void {
+    if (this.#leftMode === "log") {
+      this.#moveLogSelection(delta);
+      return;
+    }
     if (this.#rows.length === 0) return;
     const next = Math.max(0, Math.min(this.#rows.length - 1, this.#selectedIndex + delta));
     if (next === this.#selectedIndex) return;
@@ -755,6 +1021,13 @@ export class FilesPanel implements Component {
   }
 
   #openSelection(): void {
+    if (this.#leftMode === "log") {
+      if (this.#selectedLogEntry() !== undefined) {
+        this.#focus = "preview";
+        this.#requestRender();
+      }
+      return;
+    }
     const selected = this.#selectedRow();
     if (selected === undefined) return;
     if (selected.node.kind === "directory") {
@@ -785,7 +1058,6 @@ export class FilesPanel implements Component {
       this.#previewScroll = 0;
     }
     this.#previewLoading = true;
-
     void this.#source.preview(path, { signal: controller.signal, diffContext: this.#diffContext }).then(
       result => {
         if (!this.#isCurrentPreview(generation, controller, path)) return;
@@ -799,20 +1071,18 @@ export class FilesPanel implements Component {
         if (!this.#isCurrentPreview(generation, controller, path) || isAbort(error, controller.signal)) return;
         this.#previewController = undefined;
         this.#previewLoading = false;
-        this.#preview = {
-          path,
-          kind: "error",
-          lines: [],
-          truncated: false,
-          error: errorMessage(error),
-        };
+        this.#preview = { path, kind: "error", lines: [], truncated: false, error: errorMessage(error) };
         this.#requestRender();
       },
     );
   }
 
   #isCurrentPreview(generation: number, controller: AbortController, path: string): boolean {
-    return !this.#disposed && generation === this.#previewGeneration && this.#previewController === controller && this.#previewPath === path;
+    return !this.#disposed
+      && this.#leftMode === "files"
+      && generation === this.#previewGeneration
+      && this.#previewController === controller
+      && this.#previewPath === path;
   }
 
   #cancelPreview(): void {
@@ -839,24 +1109,21 @@ export class FilesPanel implements Component {
   }
 
   #previewLineCount(): number {
+    if (this.#leftMode === "log") {
+      const commit = this.#commitDiff;
+      if (commit === undefined) return 1;
+      const rows = this.#splitDiffRows(commit, this.#lastPreviewWidth);
+      return rows === undefined ? commit.lines.length : rows.length;
+    }
     const value = this.#preview;
     if (value === undefined) return 1;
     if (value.kind === "binary") return value.byteSize === undefined ? 1 : 2;
     if (value.kind === "error") return 1;
-    if (value.kind === "diff") {
-      // Scrolling counts the rows the last render produced: pairing removals
-      // with additions makes the split view shorter than the unified one.
-      const rows = this.#splitDiffRows(value, this.#lastPreviewWidth);
-      if (rows !== undefined) return rows.length;
-    }
-    return value.lines.length;
+    const rows = this.#splitDiffRows(value, this.#lastPreviewWidth);
+    return rows === undefined ? value.lines.length : rows.length;
   }
 
-  /**
-   * Side-by-side rows for a diff preview, or `undefined` when the split layout
-   * is off, the pane is too narrow, or the diff is not a plain two-way diff.
-   */
-  #splitDiffRows(value: FilePreview, width: number): readonly DiffRow[] | undefined {
+  #splitDiffRows(value: FilePreview | CommitDiffPreview, width: number): readonly DiffRow[] | undefined {
     if (this.#diffLayout !== "split" || value.kind !== "diff") return undefined;
     if (width < SPLIT_DIFF_MINIMUM_WIDTH) return undefined;
     let cached = this.#diffRows;
@@ -866,6 +1133,7 @@ export class FilesPanel implements Component {
     }
     return cached.rows;
   }
+
 
   #requestRender(): void {
     if (this.#disposed || this.#doneCalled) return;
@@ -913,11 +1181,18 @@ export class FilesPanel implements Component {
   }
 
   #treeTitle(): string {
+    if (this.#leftMode === "log") return "History";
     if (this.#snapshot?.kind === "filesystem") return "Project [filesystem]";
     return `Project [${this.#viewMode} · ${this.#scope}]`;
   }
 
   #previewTitle(): string {
+    if (this.#leftMode === "log") {
+      const entry = this.#selectedLogEntry();
+      if (entry === undefined) return "Commit preview";
+      if (this.#commitDiffLoading) return `Loading commit: ${entry.shortOid}`;
+      return this.#commitDiff?.kind === "error" ? `Error: ${entry.shortOid}` : `Commit: ${entry.shortOid}`;
+    }
     const selected = this.#selectedRow();
     const path = this.#previewPath ?? (selected?.node.kind === "file" ? selected.node.path : undefined);
     if (path === undefined) return "Preview";
@@ -935,6 +1210,7 @@ export class FilesPanel implements Component {
   }
 
   #renderTreeRows(width: number, height: number): readonly string[] {
+    if (this.#leftMode === "log") return this.#renderLogRows(width, height);
     if (this.#snapshot === undefined) {
       const message = this.#refreshError === undefined ? "Loading project files…" : `Error: ${this.#refreshError}`;
       return [this.#theme.fg(this.#refreshError === undefined ? "accent" : "error", message)];
@@ -947,11 +1223,28 @@ export class FilesPanel implements Component {
           : "No project files found";
       return [this.#theme.fg("muted", message)];
     }
-
     if (this.#selectedIndex < this.#treeOffset) this.#treeOffset = this.#selectedIndex;
     if (this.#selectedIndex >= this.#treeOffset + height) this.#treeOffset = this.#selectedIndex - height + 1;
     const visible = this.#rows.slice(this.#treeOffset, this.#treeOffset + height);
     return visible.map((row, offset) => this.#renderTreeRow(row, this.#treeOffset + offset, width));
+  }
+
+  #renderLogRows(_width: number, height: number): readonly string[] {
+    if (this.#historyLoading && this.#history === undefined) return [this.#theme.fg("accent", "Loading history…")];
+    if (this.#historyError !== undefined) return [this.#theme.fg("error", `Error: ${this.#historyError}`)];
+    const entries = this.#history?.entries;
+    if (entries === undefined || entries.length === 0) return [this.#theme.fg("muted", "No commits found")];
+    if (this.#logSelectedIndex < this.#logOffset) this.#logOffset = this.#logSelectedIndex;
+    if (this.#logSelectedIndex >= this.#logOffset + height) this.#logOffset = this.#logSelectedIndex - height + 1;
+    return entries
+      .slice(this.#logOffset, this.#logOffset + height)
+      .map((entry, offset) => this.#renderLogRow(entry, this.#logOffset + offset));
+  }
+
+  #renderLogRow(entry: GitLogEntry, index: number): string {
+    const selected = index === this.#logSelectedIndex;
+    const raw = `${selected ? ">" : " "} ${sanitizeTerminalText(entry.shortOid).replaceAll("\n", " ")} ${sanitizeTerminalText(entry.subject).replaceAll("\n", " ")}`;
+    return this.#theme.fg(selected && this.#focus === "tree" ? "accent" : "text", raw);
   }
 
   #renderTreeRow(row: TreeRow, index: number, width: number): string {
@@ -985,6 +1278,24 @@ export class FilesPanel implements Component {
 
   #buildPreviewRows(width: number, height: number): readonly string[] {
     this.#lastPreviewWidth = width;
+    if (this.#leftMode === "log") {
+      if (this.#commitDiffLoading && this.#commitDiff === undefined) return [this.#theme.fg("accent", "Loading commit preview…")];
+      const commit = this.#commitDiff;
+      if (commit === undefined) return [this.#theme.fg("muted", "Select a commit to preview")];
+      if (commit.kind === "error") return [this.#theme.fg("error", `Error: ${errorMessage(commit.error ?? "Unable to load commit")}`)];
+      const rows = this.#splitDiffRows(commit, width);
+      if (rows !== undefined) {
+        const first = Math.max(0, Math.min(this.#previewScroll, Math.max(0, rows.length - height)));
+        this.#previewScroll = first;
+        const numbers = diffGutterWidth(rows);
+        return rows
+          .slice(first, first + height)
+          .map(row => renderDiffSplitRow(row, width, this.#theme, numbers));
+      }
+      const start = Math.max(0, Math.min(this.#previewScroll, Math.max(0, commit.lines.length - height)));
+      this.#previewScroll = start;
+      return commit.lines.slice(start, start + height).map(line => renderDiffLine(line, width, this.#theme));
+    }
     if (this.#previewLoading && this.#preview === undefined) return [this.#theme.fg("accent", "Loading preview…")];
     const value = this.#preview;
     if (value === undefined) return [this.#theme.fg("muted", "Select a file to preview")];
@@ -1097,7 +1408,9 @@ export class FilesPanel implements Component {
   #footer(): string {
     const project = this.#snapshot;
     const pieces: string[] = [];
-    if (this.#preview?.truncated) pieces.push("preview truncated");
+    if (this.#leftMode === "log" && this.#commitDiff?.truncated) pieces.push("commit preview truncated");
+    else if (this.#leftMode === "log" && this.#history?.truncated) pieces.push("history truncated");
+    else if (this.#preview?.truncated) pieces.push("preview truncated");
     else if (project?.truncated) pieces.push("listing truncated");
     if (this.#sessionName !== undefined && this.#sessionName.length > 0) pieces.push(sanitizeTerminalText(this.#sessionName).replaceAll("\n", " "));
     if (project?.kind === "filesystem") {
@@ -1113,23 +1426,30 @@ export class FilesPanel implements Component {
 
     if (this.#refreshLoading) pieces.push("refreshing");
     else if (this.#refreshError !== undefined) pieces.push(`error: ${this.#refreshError}`);
+    else if (this.#watchError !== undefined) pieces.push(`watch error: ${this.#watchError}`);
+    else if (this.#leftMode === "log" && this.#historyLoading) pieces.push("loading history");
+    else if (this.#leftMode === "log" && this.#commitDiffLoading) pieces.push("loading commit");
     else if (this.#previewLoading) pieces.push("loading preview");
     else if (this.#preview?.kind === "error") pieces.push("preview error");
     else if (project?.baselineEstablishedAt !== undefined) pieces.push(`baseline ${new Date(project.baselineEstablishedAt).toISOString()}`);
     if (this.#highlight !== undefined) {
       pieces.push(`theme ${getHighlightThemeLabel(this.#highlightTheme)}`, "t theme");
     }
-    if (this.#preview?.kind === "diff") {
+    if (this.#leftMode === "log" ? this.#commitDiff?.kind === "diff" : this.#preview?.kind === "diff") {
       pieces.push(`${this.#diffLayout} diff`, `ctx ${diffContextLabel(this.#diffContext)}`);
     }
 
     if (this.#copyNotice !== undefined) pieces.push(this.#copyNotice);
 
-    pieces.push(this.#focus === "preview"
-      ? "F5/r refresh · ↑↓ scroll · pgup/dn · d/c diff · \\ tree · ←/h/tab/esc tree · drag copy · [ ] width"
-      : project?.kind === "filesystem"
-        ? "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · [ ] width · esc"
-        : "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · [ ] width · m/a · s · esc");
+    pieces.push(this.#leftMode === "log"
+      ? this.#focus === "preview"
+        ? "F5/r refresh · ↑↓ scroll · pgup/dn · d/c diff · g files · ←/h/tab/esc list · drag copy · [ ] width"
+        : "F5/r reload · ↑↓ select · →/l ↵ preview · g files · tab · \\ tree · [ ] width · esc"
+      : this.#focus === "preview"
+        ? "F5/r refresh · ↑↓ scroll · pgup/dn · d/c diff · \\ tree · ←/h/tab/esc tree · drag copy · [ ] width"
+        : project?.kind === "filesystem"
+          ? "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · [ ] width · esc"
+          : "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · g log · [ ] width · m/a · s · esc");
     return pieces.join(" · ");
   }
 }

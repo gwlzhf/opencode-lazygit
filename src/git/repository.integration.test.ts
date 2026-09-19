@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { FULL_DIFF_CONTEXT, MAX_PREVIEW_BYTES } from "../contracts";
+import { DEFAULT_DIFF_CONTEXT, FULL_DIFF_CONTEXT, MAX_PREVIEW_BYTES } from "../contracts";
 import { GitRepository } from "./repository";
 import {
   type CommandOutput,
@@ -12,6 +12,31 @@ import {
 const temporaryDirectories: string[] = [];
 
 const encoder = new TextEncoder();
+interface GitHistoryEntry {
+  readonly oid: string;
+  readonly shortOid: string;
+  readonly subject: string;
+  readonly author: string;
+  readonly authoredAt: number;
+}
+
+interface GitHistoryRepository {
+  history(signal: AbortSignal): Promise<{
+    readonly entries: readonly GitHistoryEntry[];
+    readonly truncated: boolean;
+  }>;
+  commitDiff(
+    oid: string,
+    signal: AbortSignal,
+    contextLines?: number,
+  ): Promise<{
+    readonly oid: string;
+    readonly kind: "diff" | "error";
+    readonly lines: readonly string[];
+    readonly truncated: boolean;
+  }>;
+}
+
 
 function commandOutput(
   stdout = "",
@@ -582,4 +607,80 @@ test("propagates cancellation from repository operations", async () => {
   await expect(repository.inspect(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   await expect(repository.preview("tracked.ts", controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   await expect(repository.contentHash("tracked.ts", controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("history preserves NUL-safe Git fields in newest-first order", async () => {
+  const root = await initializeRepository();
+  const subject = "subject with spaces\tand 日本語";
+  await writeFile(join(root, "tracked.ts"), "base\nhistory change\n");
+  await git(root, "add", "tracked.ts");
+  await git(root, "commit", "--quiet", "-m", subject);
+  const repository = await openRepository(root) as unknown as GitHistoryRepository;
+
+  const history = await repository.history(new AbortController().signal);
+  const newest = history.entries[0];
+  expect(history.entries.map(entry => entry.subject)).toEqual([subject, "initial"]);
+
+  expect(history.truncated).toBe(false);
+  expect(newest).toMatchObject({ subject, author: "Pi Files Test" });
+  expect(newest?.oid).toMatch(/^[a-f0-9]{40}$/);
+  expect(newest?.shortOid.length).toBeGreaterThan(0);
+  expect(newest?.oid.startsWith(newest.shortOid)).toBe(true);
+  expect(newest?.authoredAt).toBe(Number((await git(root, "log", "-1", "--format=%at")).trim()));
+});
+
+test("history caps its log at 200 entries and reports truncation", async () => {
+  const root = await initializeRepository();
+  for (let index = 1; index <= 200; index += 1) {
+    await git(root, "commit", "--allow-empty", "--quiet", "-m", `commit-${index}`);
+  }
+  const repository = await openRepository(root) as unknown as GitHistoryRepository;
+
+  const history = await repository.history(new AbortController().signal);
+
+  expect(history.entries).toHaveLength(200);
+  expect(history.truncated).toBe(true);
+  expect(history.entries[0]?.subject).toBe("commit-200");
+  expect(history.entries.at(-1)?.subject).toBe("commit-1");
+}, { timeout: 30_000 });
+
+test("returns an ordinary commit patch without git-show metadata", async () => {
+  const root = await initializeRepository();
+  const subject = "metadata must not leak";
+  await writeFile(join(root, "tracked.ts"), "base\ncommitted line\n");
+  await git(root, "add", "tracked.ts");
+  await git(root, "commit", "--quiet", "-m", subject);
+  const oid = (await git(root, "rev-parse", "HEAD")).trim();
+  const repository = await openRepository(root) as unknown as GitHistoryRepository;
+
+  const diff = await repository.commitDiff(oid, new AbortController().signal);
+  const rendered = diff.lines.join("\n");
+
+  expect(diff).toMatchObject({ oid, kind: "diff", truncated: false });
+  expect(rendered).toContain("diff --git a/tracked.ts b/tracked.ts");
+  expect(rendered).toContain("+committed line");
+  expect(rendered).not.toContain(`commit ${oid}`);
+  expect(rendered).not.toContain(subject);
+});
+
+test("keeps Git's default show semantics for a merge commit", async () => {
+  const root = await initializeRepository();
+  const mainBranch = (await git(root, "branch", "--show-current")).trim();
+  await git(root, "checkout", "--quiet", "-b", "feature");
+  await writeFile(join(root, "feature.ts"), "feature\n");
+  await git(root, "add", "feature.ts");
+  await git(root, "commit", "--quiet", "-m", "feature commit");
+  await git(root, "checkout", "--quiet", mainBranch);
+  await writeFile(join(root, "main.ts"), "main\n");
+  await git(root, "add", "main.ts");
+  await git(root, "commit", "--quiet", "-m", "main commit");
+  await git(root, "merge", "--no-ff", "--quiet", "-m", "merge commit", "feature");
+  const oid = (await git(root, "rev-parse", "HEAD")).trim();
+  const repository = await openRepository(root) as unknown as GitHistoryRepository;
+
+  const diff = await repository.commitDiff(oid, new AbortController().signal);
+  const expected = (await git(root, "show", "--format=", "--no-ext-diff", "--no-color", `--unified=${DEFAULT_DIFF_CONTEXT}`, oid, "--")).trimEnd();
+
+  expect(diff).toMatchObject({ oid, kind: "diff" });
+  expect(diff.lines.join("\n")).toBe(expected);
 });

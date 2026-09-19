@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, vi } from "bun:test";
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import type { KeybindingsManager, TUI } from "@oh-my-pi/pi-tui";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
@@ -34,12 +34,46 @@ interface Pending<T> {
   readonly value: Deferred<T>;
 }
 
+interface GitLogEntry {
+  readonly oid: string;
+  readonly shortOid: string;
+  readonly subject: string;
+  readonly author: string;
+  readonly authoredAt: number;
+}
+
+interface GitLogSnapshot {
+  readonly entries: readonly GitLogEntry[];
+  readonly truncated: boolean;
+}
+
+interface CommitDiffPreview {
+  readonly oid: string;
+  readonly kind: "diff" | "error";
+  readonly lines: readonly string[];
+  readonly truncated: boolean;
+}
+
+interface WatchCall {
+  readonly signal: AbortSignal;
+  readonly onChange: () => void;
+  readonly onError: (error: unknown) => void;
+}
+
+
 class ControlledSource implements ReviewSource {
   readonly refreshCalls: Pending<ProjectSnapshot>[] = [];
   readonly previewCalls: (Pending<FilePreview> & {
     readonly path: string;
     readonly diffContext: number | undefined;
   })[] = [];
+  readonly historyCalls: Pending<GitLogSnapshot>[] = [];
+  readonly commitDiffCalls: (Pending<CommitDiffPreview> & {
+    readonly oid: string;
+    readonly diffContext: number | undefined;
+  })[] = [];
+  readonly watchCalls: WatchCall[] = [];
+
 
   refresh({ signal }: { readonly signal: AbortSignal }): Promise<ProjectSnapshot> {
     const value = deferred<ProjectSnapshot>();
@@ -56,6 +90,28 @@ class ControlledSource implements ReviewSource {
       value,
     });
     return value.promise;
+  }
+
+  history({ signal }: { readonly signal: AbortSignal }): Promise<GitLogSnapshot> {
+    const value = deferred<GitLogSnapshot>();
+    this.historyCalls.push({ signal, value });
+    return value.promise;
+  }
+
+  commitDiff(oid: string, options: PreviewOptions): Promise<CommitDiffPreview> {
+    const value = deferred<CommitDiffPreview>();
+    this.commitDiffCalls.push({
+      oid,
+      signal: options.signal,
+      diffContext: options.diffContext,
+      value,
+    });
+    return value.promise;
+  }
+
+  watch(options: WatchCall): Promise<void> {
+    this.watchCalls.push(options);
+    return Promise.resolve();
   }
 }
 
@@ -356,11 +412,15 @@ describe("FilesPanel state machine", () => {
     expect(rendered).toContain("error: refresh failed");
   });
 
-  test("late preview and refresh generations cannot replace newer results", async () => {
+  test("manual refresh queues behind the active snapshot and late previews cannot replace newer results", async () => {
     const { panel, source, tui } = harness(60, 6);
     panel.start();
     const refreshA = source.refreshCalls[0];
     panel.handleInput("r");
+    expect(source.refreshCalls).toHaveLength(1);
+    expect(refreshA?.signal.aborted).toBe(false);
+    refreshA?.value.resolve(snapshot());
+    await settle();
     const refreshB = source.refreshCalls[1];
     refreshB?.value.resolve(snapshot());
     await settle();
@@ -403,7 +463,144 @@ describe("FilesPanel state machine", () => {
     expect(visible).not.toContain("file-0.ts");
   });
 
-  test("dispose aborts refresh and preview work and is idempotent", async () => {
+  test("installs a watcher only after resolving a Git snapshot", async () => {
+    const git = harness();
+    git.panel.start();
+    git.source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+    expect(git.source.watchCalls).toHaveLength(1);
+
+    const filesystem = harness();
+    filesystem.panel.start();
+    filesystem.source.refreshCalls[0]?.value.resolve(snapshot({ kind: "filesystem", hasHead: false }));
+    await settle();
+    expect(filesystem.source.watchCalls).toHaveLength(0);
+
+    git.panel.dispose();
+    filesystem.panel.dispose();
+  });
+
+  test("debounces watcher invalidations for 150ms", async () => {
+    vi.useFakeTimers();
+    const { panel, source } = harness();
+    try {
+      panel.start();
+      source.refreshCalls[0]?.value.resolve(snapshot());
+      await settle();
+      expect(source.watchCalls).toHaveLength(1);
+
+      const watch = source.watchCalls[0];
+      watch?.onChange();
+      for (let index = 0; index < 9; index += 1) watch?.onChange();
+      vi.advanceTimersByTime(149);
+      expect(source.refreshCalls).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(source.refreshCalls).toHaveLength(2);
+    } finally {
+      panel.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  test("coalesces watcher invalidations while a refresh is running", async () => {
+    vi.useFakeTimers();
+    const { panel, source } = harness();
+    try {
+      panel.start();
+      source.refreshCalls[0]?.value.resolve(snapshot());
+      await settle();
+      expect(source.watchCalls).toHaveLength(1);
+
+      const watch = source.watchCalls[0];
+      watch?.onChange();
+      vi.advanceTimersByTime(150);
+      const running = source.refreshCalls[1];
+      expect(source.refreshCalls).toHaveLength(2);
+      expect(running?.signal.aborted).toBe(false);
+
+      watch?.onChange();
+      watch?.onChange();
+      watch?.onChange();
+      vi.advanceTimersByTime(150);
+      expect(source.refreshCalls).toHaveLength(2);
+      expect(running?.signal.aborted).toBe(false);
+
+      running?.value.resolve(snapshot());
+      await settle();
+      vi.advanceTimersByTime(150);
+      expect(source.refreshCalls).toHaveLength(3);
+    } finally {
+      panel.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  test("watch errors preserve the preview and leave manual refresh available", async () => {
+    const { panel, source } = harness(100, 6);
+    panel.start();
+    source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+    panel.handleInput("\x1b[B");
+    source.previewCalls.at(-1)?.value.resolve(preview("src/a.ts", "text", ["stable preview"]));
+    await settle();
+    expect(source.watchCalls).toHaveLength(1);
+
+    source.watchCalls[0]?.onError(new Error("\x1b[31mwatch failed\x1b[0m"));
+    await settle();
+    const rendered = panel.render(100).join("\n");
+    expect(rendered).toContain("stable preview");
+    expect(rendered).toContain("watch error: watch failed");
+
+    panel.handleInput("r");
+    expect(source.refreshCalls).toHaveLength(2);
+
+    panel.dispose();
+  });
+
+  test("log selection aborts the old request and displays the selected commit diff", async () => {
+    const { panel, source } = harness(100, 7);
+    const first: GitLogEntry = {
+      oid: "a".repeat(40),
+      shortOid: "aaaaaaaa",
+      subject: "first commit",
+      author: "Pi Files Test",
+      authoredAt: 1,
+    };
+    const second: GitLogEntry = {
+      oid: "b".repeat(40),
+      shortOid: "bbbbbbbb",
+      subject: "second commit",
+      author: "Pi Files Test",
+      authoredAt: 2,
+    };
+    panel.start();
+    source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+
+    panel.handleInput("g");
+    expect(source.historyCalls).toHaveLength(1);
+    source.historyCalls[0]?.value.resolve({ entries: [first, second], truncated: false });
+    await settle();
+    expect(source.commitDiffCalls[0]?.oid).toBe(first.oid);
+
+    panel.handleInput("\x1b[B");
+    expect(source.commitDiffCalls[0]?.signal.aborted).toBe(true);
+    expect(source.commitDiffCalls[1]?.oid).toBe(second.oid);
+    source.commitDiffCalls[1]?.value.resolve({
+      oid: second.oid,
+      kind: "diff",
+      lines: ["+second commit diff"],
+      truncated: false,
+    });
+    await settle();
+
+    const rendered = panel.render(100).join("\n");
+    expect(rendered).toContain(second.shortOid);
+    expect(rendered).toContain(second.subject);
+    expect(rendered).toContain("+second commit diff");
+    expect(rendered).not.toContain("first commit diff");
+  });
+  test("dispose aborts watcher, refresh, history, preview, and commit-diff work idempotently", async () => {
     const refreshing = harness();
     refreshing.panel.start();
     refreshing.panel.dispose();
@@ -415,14 +612,46 @@ describe("FilesPanel state machine", () => {
     previewing.source.refreshCalls[0]?.value.resolve(snapshot());
     await settle();
     previewing.panel.handleInput("\x1b[B");
-    const pending = previewing.source.previewCalls.at(-1);
+    const pendingPreview = previewing.source.previewCalls.at(-1);
     previewing.panel.dispose();
     previewing.panel.dispose();
-    expect(pending?.signal.aborted).toBe(true);
+    expect(pendingPreview?.signal.aborted).toBe(true);
     const requests = previewing.tui.renderRequests;
-    pending?.value.resolve(preview("src/a.ts", "text", ["too late"]));
+    pendingPreview?.value.resolve(preview("src/a.ts", "text", ["too late"]));
     await settle();
     expect(previewing.tui.renderRequests).toBe(requests);
+
+    const loadingHistory = harness();
+    loadingHistory.panel.start();
+    loadingHistory.source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+    loadingHistory.panel.handleInput("g");
+    const pendingHistory = loadingHistory.source.historyCalls[0];
+    loadingHistory.panel.dispose();
+    expect(pendingHistory?.signal.aborted).toBe(true);
+
+    const logging = harness();
+    logging.panel.start();
+    logging.source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+    logging.panel.handleInput("g");
+    logging.source.historyCalls[0]?.value.resolve({
+      entries: [{
+        oid: "a".repeat(40),
+        shortOid: "aaaaaaaa",
+        subject: "first commit",
+        author: "Pi Files Test",
+        authoredAt: 1,
+      }],
+      truncated: false,
+    });
+    await settle();
+    const pendingCommit = logging.source.commitDiffCalls[0];
+    const watch = logging.source.watchCalls[0];
+    logging.panel.dispose();
+    logging.panel.dispose();
+    expect(watch?.signal.aborted).toBe(true);
+    expect(pendingCommit?.signal.aborted).toBe(true);
   });
 });
 

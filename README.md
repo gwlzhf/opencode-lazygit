@@ -87,6 +87,22 @@ In Git mode a tracked file's preview is a diff, and two keys control how it read
 
 The footer reports the active layout and context, for example `split diff · ctx 10`.
 
+## Live refresh
+
+In Git mode the panel watches the worktree and its Git metadata, so the file list, status markers, and totals follow the repository without a keypress. Edits made by the Agent, another terminal, or an external program all appear on their own.
+
+Watching uses recursive filesystem watches on the worktree, the Git directory, and — in a linked worktree, where `.git` is a file naming its real Git directory — the shared common directory. Object writes, reflog writes, and `*.lock` files are ignored, so fetching, packing, and Git's own intermediate states do not trigger refreshes. Bursts are coalesced with a 150 ms debounce, and a refresh already in flight queues at most one successor rather than stacking.
+
+The watch stops when the panel closes. If it cannot start, or fails later, the footer reports `watch error: …` and the panel remains usable with `F5` or `r`. Filesystem fallback mode has no watch, because there is no Git state to follow.
+
+## Commit history
+
+Press `g` to swap the left pane between the project tree and the commit history; press it again to return. The history lists the most recent commits as short OID and subject, and selecting an entry previews that commit's diff in the preview pane.
+
+The commit diff obeys the same `d` and `c` keys as a file diff, so layout and context carry over between the two views. Changing the context refetches the commit from Git.
+
+History is limited to the 200 most recent commits, and the footer reports `history truncated` when more exist. The footer reports `commit preview truncated` when a commit's diff exceeds the preview limits. `F5` or `r` reloads the history, and the selected commit is preserved across a reload when it still exists. The history view is Git-only and is unavailable in filesystem fallback mode.
+
 ## Keys
 
 ### Project tree
@@ -107,6 +123,7 @@ The footer reports the active layout and context, for example `split diff · ctx
 | `m` | Show modified files |
 | `a` | Show all visible files |
 | `s` | Toggle workspace/session scope |
+| `g` | Switch the left pane between the project tree and the commit history |
 | `F5` / `r` | Refresh Git status, change list, summary, and selected diff or code |
 | `Esc` | Close the panel from the tree |
 | configured OMP `app.interrupt` key | Close the panel from the tree |
@@ -125,6 +142,7 @@ The footer reports the active layout and context, for example `split diff · ctx
 | `t` | Cycle Pi, Catppuccin, Nord, and Tokyo Night syntax themes |
 | `d` | Switch the diff preview between unified and split columns |
 | `c` | Cycle the diff context: 3, 10, 25, full file |
+| `g` | Switch the left pane between the project tree and the commit history |
 | `F5` / `r` | Refresh Git status, change list, summary, and selected diff or code |
 | `Left` or `h` | Return focus to the project tree |
 | Left-button drag | Select preview text; release copies it |
@@ -134,6 +152,19 @@ The footer reports the active layout and context, for example `split diff · ctx
 Selecting a file begins loading its preview immediately. `Enter` transfers focus to the preview.
 
 Press `F5` from either pane to reload repository status and the selected file together. The refreshed tree preserves the selected path when it still exists; otherwise it moves to the nearest surviving row.
+
+### Commit history
+
+Replaces the project tree keys while the history is shown (`g`).
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move the commit selection |
+| `j` / `k` | Move the commit selection down/up |
+| `Enter` or `Right` / `l` | Focus the commit diff preview |
+| `g` | Return to the project tree |
+| `F5` / `r` | Reload the commit history |
+| `Esc` | Close the panel |
 
 ## Review modes and scopes
 
@@ -161,6 +192,7 @@ To keep the OMP session responsive:
 - Preview source or diff input is limited to 1 MiB per file.
 - A preview renders at most 5,000 logical lines.
 - Non-Git filesystem traversal stops after 20,000 entries.
+- The commit history lists at most the 200 most recent commits.
 
 The panel displays a truncation state when a limit is reached. Git all-files mode includes tracked and untracked/non-ignored paths, excludes ignored paths, and never traverses `.git` internals.
 

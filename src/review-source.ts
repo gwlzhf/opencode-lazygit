@@ -4,18 +4,25 @@ import {
   normalizeProjectPath,
   type ChangeRecord,
   type ChangeSummary,
+  type CommitDiffPreview,
   type FilePreview,
+  type GitLogSnapshot,
   type PreviewOptions,
   type ProjectSnapshot,
   type RefreshOptions,
   type ReviewSource,
+  type WatchOptions,
 } from "./contracts";
 import { FilesystemProject } from "./filesystem";
 import { GitRepository, type RepositoryInspection } from "./git/repository";
 import type { ProcessRunner } from "./git/process";
+import { watchGitRepository } from "./git/watch";
 import { BaselineStore } from "./model/baseline";
 
-type GitBackend = Pick<GitRepository, "inspect" | "contentHash" | "preview">;
+type GitBackend = Pick<
+  GitRepository,
+  "inspect" | "contentHash" | "preview" | "history" | "commitDiff"
+>;
 type FilesystemBackend = Pick<FilesystemProject, "inspect" | "preview">;
 
 export interface ReviewSourceFactories {
@@ -25,6 +32,7 @@ export interface ReviewSourceFactories {
     signal: AbortSignal,
   ) => Promise<GitBackend | undefined>;
   readonly createFilesystem: (root: string) => FilesystemBackend;
+  readonly watchGit?: (root: string, options: WatchOptions) => Promise<void>;
 }
 
 type ActiveBackend =
@@ -52,6 +60,7 @@ interface BaselineCoordinator {
 const productionFactories: ReviewSourceFactories = {
   openGit: (cwd, runner, signal) => GitRepository.open(cwd, runner, signal),
   createFilesystem: root => new FilesystemProject(root),
+  watchGit: watchGitRepository,
 };
 const baselineCoordinators = new WeakMap<BaselineStore, BaselineCoordinator>();
 let sessionBaselines = new BaselineStore();
@@ -238,6 +247,15 @@ export class ProjectReviewSource implements ReviewSource {
     );
   }
 
+  async #gitBackend(signal: AbortSignal): Promise<Extract<ActiveBackend, { kind: "git" }>> {
+    signal.throwIfAborted();
+    const backend = this.#backend ?? (await this.#discoverBackend(signal)).backend;
+    if (backend.kind !== "git") {
+      throw new Error("Git-only review operations require a Git repository");
+    }
+    return backend;
+  }
+
   async refresh(options: RefreshOptions): Promise<ProjectSnapshot> {
     const discovery = await this.#discoverBackend(options.signal);
     if (discovery.backend.kind === "filesystem") {
@@ -297,6 +315,21 @@ export class ProjectReviewSource implements ReviewSource {
     return backend.kind === "git"
       ? backend.project.preview(path, options.signal, options.diffContext)
       : backend.project.preview(path, options.signal);
+  }
+
+  async history(options: RefreshOptions): Promise<GitLogSnapshot> {
+    const backend = await this.#gitBackend(options.signal);
+    return backend.project.history(options.signal);
+  }
+
+  async commitDiff(oid: string, options: PreviewOptions): Promise<CommitDiffPreview> {
+    const backend = await this.#gitBackend(options.signal);
+    return backend.project.commitDiff(oid, options.signal, options.diffContext);
+  }
+
+  async watch(options: WatchOptions): Promise<void> {
+    const backend = await this.#gitBackend(options.signal);
+    return (this.factories.watchGit ?? watchGitRepository)(backend.root, options);
   }
 }
 

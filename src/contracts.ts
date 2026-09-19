@@ -84,8 +84,35 @@ export interface FilePreview {
   readonly error?: string;
 }
 
+export interface GitLogEntry {
+  readonly oid: string;
+  readonly shortOid: string;
+  readonly subject: string;
+  readonly author: string;
+  readonly authoredAt: number;
+}
+
+export interface GitLogSnapshot {
+  readonly entries: readonly GitLogEntry[];
+  readonly truncated: boolean;
+}
+
+export interface CommitDiffPreview {
+  readonly oid: string;
+  readonly kind: "diff" | "error";
+  readonly lines: readonly string[];
+  readonly truncated: boolean;
+  readonly error?: string;
+}
+
 export interface RefreshOptions {
   readonly signal: AbortSignal;
+}
+
+export interface WatchOptions {
+  readonly signal: AbortSignal;
+  readonly onChange: () => void;
+  readonly onError: (error: unknown) => void;
 }
 
 export interface PreviewOptions {
@@ -97,6 +124,9 @@ export interface PreviewOptions {
 export interface ReviewSource {
   refresh(options: RefreshOptions): Promise<ProjectSnapshot>;
   preview(path: string, options: PreviewOptions): Promise<FilePreview>;
+  history(options: RefreshOptions): Promise<GitLogSnapshot>;
+  commitDiff(oid: string, options: PreviewOptions): Promise<CommitDiffPreview>;
+  watch(options: WatchOptions): Promise<void>;
 }
 
 export interface BaselineEntry {

@@ -8,7 +8,10 @@ import {
   normalizeDiffContext,
   type ChangeRecord,
   type ChangeSummary,
+  type CommitDiffPreview,
   type FilePreview,
+  type GitLogEntry,
+  type GitLogSnapshot,
   normalizeProjectPath,
 } from "../contracts";
 import {
@@ -22,6 +25,7 @@ import {
   type ProcessRunner,
 } from "./process";
 import { GitOutputError, parsePorcelainV1Z } from "./status";
+const HISTORY_LIMIT = 200;
 
 const SMALL_GIT_OUTPUT = 64 * 1024;
 const HASH_BUFFER_BYTES = 64 * 1024;
@@ -251,6 +255,52 @@ function boundedLogicalLines(text: string): { lines: string[]; truncated: boolea
   return { lines, truncated: false };
 }
 
+function parseGitLog(bytes: Uint8Array): GitLogEntry[] {
+  if (bytes.byteLength === 0) return [];
+  if (bytes[bytes.byteLength - 1] !== 0) {
+    throw new GitOutputError("Malformed git log output: missing final NUL terminator");
+  }
+
+  const fields = decodeGitOutput(bytes, "git log output").slice(0, -1).split("\0");
+  if (fields.length % 5 !== 0) {
+    throw new GitOutputError("Malformed git log output: incomplete record");
+  }
+
+  const entries: GitLogEntry[] = [];
+  for (let index = 0; index < fields.length; index += 5) {
+    const oid = fields[index];
+    const shortOid = fields[index + 1];
+    const subject = fields[index + 2];
+    const author = fields[index + 3];
+    const authoredAt = fields[index + 4];
+    if (
+      oid === undefined ||
+      shortOid === undefined ||
+      subject === undefined ||
+      author === undefined ||
+      authoredAt === undefined ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid) ||
+      !/^[0-9a-f]+$/i.test(shortOid)
+    ) {
+      throw new GitOutputError(`Malformed git log output: invalid record ${index / 5 + 1}`);
+    }
+    const authoredAtValue = Number(authoredAt);
+    if (!/^-?\d+$/.test(authoredAt) || !Number.isSafeInteger(authoredAtValue)) {
+      throw new GitOutputError(
+        `Malformed git log output: invalid authored timestamp in record ${index / 5 + 1}`,
+      );
+    }
+    entries.push({ oid, shortOid, subject, author, authoredAt: authoredAtValue });
+  }
+  return entries;
+}
+
+function validateCommitOid(oid: string): void {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)) {
+    throw new GitOutputError("Invalid commit object ID");
+  }
+}
+
 export class GitRepository {
   private rootPath: string | undefined;
   private latestInspection: RepositoryInspection | undefined;
@@ -400,6 +450,23 @@ export class GitRepository {
     return inspection;
   }
 
+  async history(signal: AbortSignal): Promise<GitLogSnapshot> {
+    throwIfAborted(signal);
+    const args = [
+      "log",
+      "-z",
+      `--max-count=${HISTORY_LIMIT + 1}`,
+      "--format=%H%x00%h%x00%s%x00%an%x00%at",
+    ] as const;
+    const output = await this.run(args, signal, MAX_PREVIEW_BYTES);
+    ensureComplete(args, output);
+    const entries = parseGitLog(output.stdout);
+    return {
+      entries: entries.slice(0, HISTORY_LIMIT),
+      truncated: entries.length > HISTORY_LIMIT,
+    };
+  }
+
   async contentHash(path: string, signal: AbortSignal): Promise<string | null> {
     throwIfAborted(signal);
     let resolved: { displayPath: string; absolutePath: string };
@@ -486,4 +553,43 @@ export class GitRepository {
       };
     }
   }
+
+  async commitDiff(
+    oid: string,
+    signal: AbortSignal,
+    contextLines: number = DEFAULT_DIFF_CONTEXT,
+  ): Promise<CommitDiffPreview> {
+    throwIfAborted(signal);
+    try {
+      validateCommitOid(oid);
+      const args = [
+        "show",
+        "--format=",
+        "--no-ext-diff",
+        "--no-color",
+        `--unified=${normalizeDiffContext(contextLines) ?? DEFAULT_DIFF_CONTEXT}`,
+        oid,
+        "--",
+      ] as const;
+      const output = await this.run(args, signal, MAX_PREVIEW_BYTES);
+      if (output.exitCode !== 0) throw commandFailure(args, output);
+      const content = boundedLogicalLines(decodeGitOutput(output.stdout, "git show output"));
+      return {
+        oid,
+        kind: "diff",
+        lines: content.lines,
+        truncated: output.truncated || content.truncated,
+      };
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return {
+        oid,
+        kind: "error",
+        lines: [],
+        truncated: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
 }
