@@ -658,6 +658,11 @@ export class FilesPanel implements Component {
       if (deltaColumns > 0) this.#setTreeCollapsed(false);
       return;
     }
+    // The single-pane layout has no divider: the tree pane spans the panel and
+    // the stored width is not consulted. Resizing there would only rewrite the
+    // persisted ratio, changing the pane width behind the user's back for the
+    // next terminal wide enough to show both panes.
+    if (!this.#isWideLayout(this.#lastWidth)) return;
     this.#setTreeColumns(this.#treeWidth(this.#lastWidth) + deltaColumns);
   }
 
@@ -1441,15 +1446,19 @@ export class FilesPanel implements Component {
 
     if (this.#copyNotice !== undefined) pieces.push(this.#copyNotice);
 
-    pieces.push(this.#leftMode === "log"
+    // `[` / `]` only move a divider that the side-by-side layout draws, so the
+    // hint is omitted when the panel is showing a single pane.
+    const width = this.#isWideLayout(this.#lastWidth) ? "[ ] width" : undefined;
+    const hints = this.#leftMode === "log"
       ? this.#focus === "preview"
-        ? "F5/r refresh · ↑↓ scroll · pgup/dn · d/c diff · g files · ←/h/tab/esc list · drag copy · [ ] width"
-        : "F5/r reload · ↑↓ select · →/l ↵ preview · g files · tab · \\ tree · [ ] width · esc"
+        ? ["F5/r refresh", "↑↓ scroll", "pgup/dn", "d/c diff", "g files", "←/h/tab/esc list", "drag copy", width]
+        : ["F5/r reload", "↑↓ select", "→/l ↵ preview", "g files", "tab", "\\ tree", width, "esc"]
       : this.#focus === "preview"
-        ? "F5/r refresh · ↑↓ scroll · pgup/dn · d/c diff · \\ tree · ←/h/tab/esc tree · drag copy · [ ] width"
+        ? ["F5/r refresh", "↑↓ scroll", "pgup/dn", "d/c diff", "\\ tree", "←/h/tab/esc tree", "drag copy", width]
         : project?.kind === "filesystem"
-          ? "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · [ ] width · esc"
-          : "F5/r refresh · ↑↓ move · →/l preview · ↵ open · tab · \\ tree · g log · [ ] width · m/a · s · esc");
+          ? ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", width, "esc"]
+          : ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", "g log", width, "m/a", "s", "esc"];
+    pieces.push(hints.filter(hint => hint !== undefined).join(" · "));
     return pieces.join(" · ");
   }
 }

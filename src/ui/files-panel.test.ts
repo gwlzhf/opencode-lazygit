@@ -706,6 +706,44 @@ describe("FilesPanel focus and tree width", () => {
     expect(dividerColumn(panel.render(100))).toBe(30);
   });
 
+  test("[ and ] are ignored in the single-pane layout instead of rewriting the stored width", async () => {
+    // Below 80 columns the panel shows one pane and never consults the tree
+    // width, so a resize there would only change the pane behind the user's
+    // back the next time the terminal is wide enough to show both panes.
+    const { panel, source, tui, ratios } = harness(70, 6);
+    panel.start();
+    source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+    // Column 69 is the closing border of a 70-column row: no interior divider.
+    expect(dividerColumn(panel.render(70))).toBe(69);
+
+    const atNarrow = tui.renderRequests;
+    for (let press = 0; press < 5; press += 1) panel.handleInput("[");
+    panel.handleInput("]");
+    panel.handleInput("\x1b[1;5D");
+    panel.handleInput("\x1b[1;5C");
+    expect(ratios).toEqual([]);
+    expect(tui.renderRequests).toBe(atNarrow);
+
+    // Widening the terminal still opens at the untouched default cap.
+    expect(dividerColumn(panel.render(100))).toBe(30);
+  });
+
+  test("the footer advertises [ ] width only where a divider exists", async () => {
+    // Wide enough that the footer is not clipped before the width hint.
+    const { panel, source } = harness(200, 6);
+    panel.start();
+    source.refreshCalls[0]?.value.resolve(snapshot());
+    await settle();
+
+    expect(panel.render(200).at(-1)).toContain("[ ] width");
+    expect(panel.render(70).at(-1)).not.toContain("[ ] width");
+    // A collapsed tree is single-pane too, however wide the terminal is.
+    panel.render(200);
+    panel.handleInput("\\");
+    expect(panel.render(200).at(-1)).not.toContain("[ ] width");
+  });
+
   test("the width ratio survives a terminal width change", async () => {
     const { panel, source } = harness(100, 6);
     panel.start();
