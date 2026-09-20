@@ -101,7 +101,7 @@ async function collectImportGraph(entrypoint: string): Promise<{ paths: Set<stri
 }
 
 test("manifest exposes both host entrypoints and the exact package contract", async () => {
-  expect(manifest.version).toBe("0.4.2");
+  expect(manifest.version).toBe("0.4.3");
   expect(manifest.omp?.extensions).toEqual(["./src/index.ts"]);
   expect(manifest.exports).toEqual({
     "./tui": {
