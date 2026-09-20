@@ -256,6 +256,23 @@ export function filesRouteMouseTarget(event: MouseEvent, state: ReviewController
   if (!wide && state.focus !== "preview") return "ignore";
   return "preview";
 }
+export function copyFilesRouteSelection(
+  selection: PreviewSelection | undefined,
+  rows: readonly string[],
+  width: number,
+  copyToClipboard: (text: string) => boolean,
+  warn: () => void,
+): string | undefined {
+  if (selection === undefined || isEmptySelection(selection)) return undefined;
+  const text = selectionText(rows, selection, width);
+  if (!copyToClipboard(text)) {
+    warn();
+    return undefined;
+  }
+  const lines = text.split("\n").length;
+  return `copied ${lines} ${lines === 1 ? "line" : "lines"}`;
+}
+
 export function FilesRoute(props: FilesRouteProps) {
 
   const dimensions = useTerminalDimensions();
@@ -324,20 +341,21 @@ export function FilesRoute(props: FilesRouteProps) {
   };
 
   const copySelection = (): void => {
-    if (selection === undefined || isEmptySelection(selection)) return;
     const state = controller?.state;
     if (state === undefined) return;
     const width = isWide(dimensions().width, state)
       ? Math.max(0, dimensions().width - treeWidth(dimensions().width, state.treeRatio) - 2)
       : Math.max(0, dimensions().width - 2);
     const rows = buildPreviewLines(state, width).map(line => previewLineText(line));
-    const text = selectionText(rows, selection, width);
-    if (!props.api.renderer.copyToClipboardOSC52(text)) {
-      props.api.ui.toast({ variant: "warning", message: "Terminal clipboard copy is unavailable." });
-      return;
-    }
-    const lines = text.split("\n").length;
-    copyNotice = `copied ${lines} ${lines === 1 ? "line" : "lines"}`;
+    const notice = copyFilesRouteSelection(
+      selection,
+      rows,
+      width,
+      text => props.api.renderer.copyToClipboardOSC52(text),
+      () => props.api.ui.toast({ variant: "warning", message: "Terminal clipboard copy is unavailable." }),
+    );
+    if (notice === undefined) return;
+    copyNotice = notice;
     setRevision((value: number) => value + 1);
   };
 

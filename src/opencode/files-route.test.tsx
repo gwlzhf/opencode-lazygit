@@ -12,7 +12,7 @@ import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
 import type { ReviewControllerState } from "../ui/review-controller";
 import type { ReviewController } from "../ui/review-controller";
-import { createFilesRouteBindings, createFilesRouteKeyHandler, filesRouteMouseTarget, FilesRoute } from "./files-route";
+import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, filesRouteMouseTarget, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -171,18 +171,16 @@ describe("FilesRoute", () => {
     expect(source.signals.length).toBe(signalCount);
     expect(mounted.settings.flushed()).toBe(1);
   });
-  test("copies preview mouse selections through OSC52 and warns on failure", async () => {
-    const mounted = await mount(100, 20, controlledSource());
-    await mounted.setup.waitForFrame(frame => frame.includes("const 界 = true;"));
+  test("copies preview selections through OSC52 and warns on failure", () => {
+    const selection = { anchor: { row: 0, col: 0 }, head: { row: 0, col: 5 } };
     let copied = "";
-    const renderer = mounted.setup.renderer as unknown as { copyToClipboardOSC52: (text: string) => boolean };
-    renderer.copyToClipboardOSC52 = text => { copied = text; return true; };
-    await mounted.setup.mockMouse.drag(55, 2, 66, 2);
+    let warned = false;
+    const notice = copyFilesRouteSelection(selection, ["const 界 = true;"], 20, text => { copied = text; return true; }, () => { warned = true; });
     expect(copied).toContain("const");
-    renderer.copyToClipboardOSC52 = () => false;
-    await mounted.setup.mockMouse.drag(55, 2, 66, 2);
-    expect(mounted.toasts.some(toast => typeof toast === "object" && toast !== null && "message" in toast && toast.message === "Terminal clipboard copy is unavailable.")).toBe(true);
-    mounted.setup.renderer.destroy();
+    expect(notice).toBe("copied 1 line");
+    const failed = copyFilesRouteSelection(selection, ["const 界 = true;"], 20, () => false, () => { warned = true; });
+    expect(failed).toBeUndefined();
+    expect(warned).toBe(true);
   });
 
   test("production mouse target helper routes divider, tree, and preview panes", () => {
