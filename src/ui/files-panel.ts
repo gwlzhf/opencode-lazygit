@@ -307,6 +307,11 @@ export class FilesPanel implements Component {
       this.#controller.setViewMode("modified");
       return;
     }
+    if (matchesKey(data, "v")) {
+      this.#clearSelection();
+      this.#controller.toggleListLayout();
+      return;
+    }
     if (matchesKey(data, "s")) {
       this.#clearSelection();
       this.#controller.toggleScope();
@@ -424,6 +429,7 @@ export class FilesPanel implements Component {
       || previous.diffContext !== next.diffContext
       || previous.leftMode !== next.leftMode
       || previous.viewMode !== next.viewMode
+      || previous.listLayout !== next.listLayout
       || previous.scope !== next.scope
       || previous.history !== next.history
       || previous.logSelectedIndex !== next.logSelectedIndex
@@ -532,7 +538,8 @@ export class FilesPanel implements Component {
     const state = this.#state;
     if (state.leftMode === "log") return "History";
     if (state.snapshot?.kind === "filesystem") return "Project [filesystem]";
-    return `Project [${state.viewMode} · ${state.scope}]`;
+    const listing = this.#usesChangeList() ? "changes" : state.viewMode;
+    return `Project [${listing} · ${state.scope}]`;
   }
 
   #previewTitle(): string {
@@ -563,7 +570,13 @@ export class FilesPanel implements Component {
       return [this.#theme.fg(state.refreshError === undefined ? "accent" : "error", message)];
     }
     if (state.rows.length === 0) {
-      const message = state.snapshot.kind === "filesystem" ? "No project files found" : state.viewMode === "modified" ? `No ${state.scope} changes — press a for all files` : "No project files found";
+      const message = state.snapshot.kind === "filesystem"
+        ? "No project files found"
+        : this.#usesChangeList()
+          ? `No ${state.scope} changes — press v for the file tree`
+          : state.viewMode === "modified"
+            ? `No ${state.scope} changes — press a for all files`
+            : "No project files found";
       return [this.#theme.fg("muted", message)];
     }
     if (state.selectedIndex < this.#treeOffset) this.#treeOffset = state.selectedIndex;
@@ -589,8 +602,17 @@ export class FilesPanel implements Component {
     return this.#theme.fg(selected && state.focus === "tree" ? "accent" : "text", raw);
   }
 
-  #renderTreeRow(row: TreeRow, index: number, _width: number): string {
+  #usesChangeList(): boolean {
     const state = this.#state;
+    return state.listLayout === "changes" && state.snapshot?.kind === "git";
+  }
+
+  #renderTreeRow(row: TreeRow, index: number, width: number): string {
+    const state = this.#state;
+    if (row.node.kind === "section") {
+      const label = `── ${sanitizeTerminalText(row.node.name).replaceAll("\n", " ")} `;
+      return this.#theme.fg("muted", `${label}${"─".repeat(Math.max(0, width - label.length))}`);
+    }
     const selected = index === state.selectedIndex;
     const cursor = selected ? ">" : " ";
     const indent = "  ".repeat(row.depth);
@@ -708,7 +730,7 @@ export class FilesPanel implements Component {
     if (project?.kind === "filesystem") pieces.push("filesystem", `${project.allFiles.length} ${project.allFiles.length === 1 ? "file" : "files"}`);
     else {
       const summary = project === undefined ? { files: 0, insertions: 0, deletions: 0 } : state.scope === "workspace" ? project.workspaceSummary : project.sessionSummary;
-      pieces.push(state.viewMode, state.scope, `+${summary.insertions} -${summary.deletions}`, `${summary.files} ${summary.files === 1 ? "file" : "files"}`);
+      pieces.push(this.#usesChangeList() ? "changes" : state.viewMode, state.scope, `+${summary.insertions} -${summary.deletions}`, `${summary.files} ${summary.files === 1 ? "file" : "files"}`);
     }
     if (state.refreshLoading) pieces.push("refreshing");
     else if (state.refreshError !== undefined) pieces.push(`error: ${state.refreshError}`);
@@ -724,7 +746,7 @@ export class FilesPanel implements Component {
     const width = this.#isWideLayout(this.#lastWidth) ? "[ ] width" : undefined;
     const hints = state.leftMode === "log"
       ? state.focus === "preview" ? ["F5/r refresh", "↑↓ scroll", "pgup/dn", "d/c diff", "g files", "←/h/tab/esc list", "drag copy", width] : ["F5/r reload", "↑↓ select", "→/l ↵ preview", "g files", "tab", "\\ tree", width, "esc"]
-      : state.focus === "preview" ? ["F5/r refresh", "↑↓ scroll", "pgup/dn", "d/c diff", "\\ tree", "←/h/tab/esc tree", "drag copy", width] : project?.kind === "filesystem" ? ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", width, "esc"] : ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", "g log", width, "m/a", "s", "esc"];
+      : state.focus === "preview" ? ["F5/r refresh", "↑↓ scroll", "pgup/dn", "d/c diff", "\\ tree", "←/h/tab/esc tree", "drag copy", width] : project?.kind === "filesystem" ? ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", width, "esc"] : ["F5/r refresh", "↑↓ move", "→/l preview", "↵ open", "tab", "\\ tree", "g log", width, "v list", "m/a", "s", "esc"];
     pieces.push(hints.filter(hint => hint !== undefined).join(" · "));
     return pieces.join(" · ");
   }

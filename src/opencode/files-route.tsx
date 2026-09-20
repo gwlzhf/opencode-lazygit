@@ -112,10 +112,15 @@ function previewTitle(state: ReviewControllerState | undefined): string {
   }
 }
 
+function usesChangeList(state: ReviewControllerState | undefined): boolean {
+  return state?.listLayout === "changes" && state.snapshot?.kind === "git";
+}
+
 function treeTitle(state: ReviewControllerState | undefined): string {
   if (state?.leftMode === "log") return "History";
   if (state?.snapshot?.kind === "filesystem") return "Project [filesystem]";
-  return `Project [${state?.viewMode ?? "modified"} · ${state?.scope ?? "workspace"}]`;
+  const listing = usesChangeList(state) ? "changes" : state?.viewMode ?? "modified";
+  return `Project [${listing} · ${state?.scope ?? "workspace"}]`;
 }
 
 function statusColor(status: string | undefined, theme: ThemeTokens): ThemeTokens["text"] {
@@ -238,6 +243,7 @@ export function createFilesRouteBindings(handleKey: (key: string) => void) {
     { key: "ctrl+b", cmd: () => handleKey("ctrl+b") }, { key: "d", cmd: () => handleKey("d") },
     { key: "c", cmd: () => handleKey("c") }, { key: "m", cmd: () => handleKey("m") },
     { key: "a", cmd: () => handleKey("a") }, { key: "s", cmd: () => handleKey("s") },
+    { key: "v", cmd: () => handleKey("v") },
     { key: "g", cmd: () => handleKey("g") }, { key: "f5", cmd: () => handleKey("f5") },
     { key: "r", cmd: () => handleKey("r") }, { key: "pageup", cmd: () => handleKey("pageup") },
     { key: "pagedown", cmd: () => handleKey("pagedown") }, { key: "home", cmd: () => handleKey("home") },
@@ -289,6 +295,7 @@ export function createFilesRouteKeyHandler(context: FilesRouteInputContext): (ke
     }
     if (key === "a" && state.leftMode === "files") { context.clearSelection(); active.setViewMode("all"); return; }
     if (key === "m" && state.leftMode === "files") { context.clearSelection(); active.setViewMode("modified"); return; }
+    if (key === "v" && state.leftMode === "files") { context.clearSelection(); active.toggleListLayout(); return; }
     if (key === "s" && state.leftMode === "files") { context.clearSelection(); active.toggleScope(); return; }
     if (key === "up" || key === "k") { context.clearSelection(); active.movePrimarySelection(-1); return; }
     if (key === "down" || key === "j") { context.clearSelection(); active.movePrimarySelection(1); return; }
@@ -609,7 +616,13 @@ export function FilesRoute(props: FilesRouteProps) {
     }
     if (state.snapshot === undefined) return <text content={state.refreshError === undefined ? "Loading project files…" : `Error: ${safeText(state.refreshError)}`} fg={state.refreshError === undefined ? theme.primary : theme.error} />;
     if (state.rows.length === 0) {
-      const message = state.snapshot.kind === "filesystem" ? "No project files found" : state.viewMode === "modified" ? `No ${state.scope} changes — press a for all files` : "No project files found";
+      const message = state.snapshot.kind === "filesystem"
+        ? "No project files found"
+        : usesChangeList(state)
+          ? `No ${state.scope} changes — press v for the file tree`
+          : state.viewMode === "modified"
+            ? `No ${state.scope} changes — press a for all files`
+            : "No project files found";
       return <text content={message} fg={theme.textMuted} />;
     }
     if (state.selectedIndex < treeOffset) treeOffset = state.selectedIndex;
@@ -618,6 +631,10 @@ export function FilesRoute(props: FilesRouteProps) {
       const index = treeOffset + offset();
       const selected = index === state.selectedIndex;
       const node = row.node;
+      if (node.kind === "section") {
+        const label = `── ${safeText(node.name)} `;
+        return <text content={`${label}${"─".repeat(Math.max(0, width - label.length))}`} fg={theme.textMuted} />;
+      }
       const cursor = selected ? ">" : " ";
       const indent = "  ".repeat(row.depth);
       const text = node.kind === "directory"
@@ -637,7 +654,7 @@ export function FilesRoute(props: FilesRouteProps) {
     else if (state.preview?.truncated) pieces.push("preview truncated");
     else if (project?.truncated) pieces.push("listing truncated");
     if (project?.kind === "filesystem") pieces.push("filesystem", `${summary.files} ${summary.files === 1 ? "file" : "files"}`);
-    else pieces.push(state.viewMode, state.scope, `+${summary.insertions} -${summary.deletions}`, `${summary.files} ${summary.files === 1 ? "file" : "files"}`);
+    else pieces.push(usesChangeList(state) ? "changes" : state.viewMode, state.scope, `+${summary.insertions} -${summary.deletions}`, `${summary.files} ${summary.files === 1 ? "file" : "files"}`);
     if (state.refreshLoading) pieces.push("refreshing");
     else if (state.refreshError !== undefined) pieces.push(`error: ${safeText(state.refreshError)}`);
     else if (state.watchError !== undefined) pieces.push(`watch error: ${safeText(state.watchError)}`);

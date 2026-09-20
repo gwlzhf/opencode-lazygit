@@ -142,6 +142,7 @@ describe("FilesRoute", () => {
       toggleDiffLayout: () => calls.push("diff"),
       cycleDiffContext: () => calls.push("context"),
       toggleScope: () => calls.push("scope"),
+      toggleListLayout: () => calls.push("list"),
       collapseOrParent: () => calls.push("parent"),
       expandOrChild: () => calls.push("child"),
       openSelection: () => calls.push("open"),
@@ -163,8 +164,8 @@ describe("FilesRoute", () => {
     });
     const bindings = createFilesRouteBindings(handler);
     const invoke = (key: string): void => bindings.find(binding => binding.key === key)?.cmd();
-    invoke("r"); invoke("a"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
-    expect(calls).toEqual(["refresh", "mode:all", "move:1", "focus", "resize:1", "close"]);
+    invoke("r"); invoke("a"); invoke("v"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
+    expect(calls).toEqual(["refresh", "mode:all", "list", "move:1", "focus", "resize:1", "close"]);
     state.focus = "preview";
     invoke("escape");
     expect(calls.at(-1)).toBe("tree");
