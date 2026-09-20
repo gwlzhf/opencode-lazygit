@@ -61,7 +61,7 @@ Within an interactive OMP or OpenCode session, use either entry point:
 - `/files`
 - `Alt+Q`
 
-Both commands invoke the same command (`pi-lazygit.files.open`) and open the same native review route (`pi-lazygit.files`). Only one panel can be open at a time. Headless, print, RPC, and ACP invocations do not mount the panel; an attempted invocation reports that the interactive UI is unavailable.
+On OMP, `/files` and `Alt+Q` open the same fullscreen review panel. On OpenCode, both entry points invoke the same command (`pi-lazygit.files.open`) and open the native review route (`pi-lazygit.files`). Only one panel can be open at a time. Headless, print, RPC, and ACP invocations do not mount the panel; an attempted invocation reports that the interactive UI is unavailable.
 
 OMP opens its fullscreen overlay on the terminal's alternate screen. OpenCode mounts the equivalent native OpenTUI route, so both hosts keep their own navigation, focus, mouse, and theme behavior.
 
@@ -200,7 +200,7 @@ The view mode and change scope are independent:
 - **Workspace scope** shows current working-tree changes relative to `HEAD`, including staged and unstaged changes.
 - **Session scope** (`s`) shows changes that differ from the repository snapshot captured for the current host session.
 
-The active repository baseline is captured at `session_start`, before the panel opens. A repository first visited later in the same host session receives a baseline on first access. Baselines live only in memory and are cleared with the host's session shutdown, so restarting OMP or OpenCode starts a new comparison period.
+Each host keeps its repository baseline in memory. OMP captures it at `session_start` before the panel opens; a repository first visited later in that OMP session receives a baseline on first access. OpenCode prepares the current directory's baseline once during plugin activation when paths are ready, or before the first successful open if activation happens early. Baselines are cleared when the host session shuts down, so restarting OMP or OpenCode starts a new comparison period.
 
 Session scope is temporal attribution, not Agent attribution. Any edit made after the baseline counts, including edits made by external programs, other terminals, or people. A file restored to its baseline state disappears from session scope.
 

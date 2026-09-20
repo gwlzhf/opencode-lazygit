@@ -110,6 +110,8 @@ test("manifest exposes both host entrypoints and the exact package contract", as
     },
   });
   expect(manifest.exports).not.toHaveProperty(".");
+  expect(manifest).not.toHaveProperty("main");
+  expect(manifest).not.toHaveProperty("server");
   expect(shippedFiles.has("src/index.ts")).toBe(true);
   expect(shippedFiles.has("src/opencode/index.tsx")).toBe(true);
   expect(await Bun.file(join(repositoryDirectory, "src/index.ts")).exists()).toBe(true);
