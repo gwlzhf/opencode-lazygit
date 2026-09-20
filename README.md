@@ -15,14 +15,14 @@ The extension targets the OMP 18.0.11 interactive TUI and OpenCode 1.18.31+ in W
 Install the published Git tag through OMP:
 
 ```powershell
-omp plugin install github:gwlzhf/pi-lazygit#v0.4.0
+omp plugin install github:gwlzhf/pi-lazygit#v0.4.1
 ```
 
 When replacing an installation that came from another source, uninstall it first so OMP can register the Git package cleanly:
 
 ```powershell
 omp plugin uninstall pi-lazygit
-omp plugin install github:gwlzhf/pi-lazygit#v0.4.0
+omp plugin install github:gwlzhf/pi-lazygit#v0.4.1
 ```
 
 Restart OMP after installation so the plugin is loaded and the host session baseline is established.
@@ -30,7 +30,7 @@ Restart OMP after installation so the plugin is loaded and the host session base
 Install the native OpenCode TUI plugin from the published tag:
 
 ```powershell
-opencode plugin github:gwlzhf/pi-lazygit#v0.4.0
+opencode plugin github:gwlzhf/opencode-lazygit#v0.4.1
 ```
 
 For a local checkout, add the package path to the OpenCode `tui.json` plugin configuration:
