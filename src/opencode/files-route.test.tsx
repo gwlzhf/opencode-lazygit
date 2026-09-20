@@ -5,8 +5,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { KeymapProvider } from "@opentui/keymap/solid";
 import { RGBA } from "@opentui/core";
 import { render } from "@opentui/solid";
-// @ts-expect-error OpenTUI's runtime Solid entrypoint has no standalone declaration.
-import { createRoot } from "solid-js/dist/solid.js";
+import { createRoot } from "solid-js";
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
 import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
@@ -115,6 +114,14 @@ describe("FilesRoute", () => {
     narrow.setup.renderer.destroy();
   });
   
+  test("repaints the tree once the first refresh resolves", async () => {
+    const mounted = await mount(100, 20, controlledSource());
+    const frame = mounted.setup.captureCharFrame();
+    expect(frame).not.toContain("Loading project files");
+    expect(frame).toContain("界.ts");
+    mounted.setup.renderer.destroy();
+  });
+
   test("registered bindings dispatch route keyboard behavior through the production handler", async () => {
     const mounted = await mount(100, 20, controlledSource());
     expect(mounted.modePushes).toContain("pi-lazygit.files");
@@ -170,7 +177,7 @@ describe("FilesRoute", () => {
     const source = controlledSource();
     const mounted = await mount(100, 20, source);
     const signalCount = source.signals.length;
-    mounted.disposeRoot();
+    mounted.setup.renderer.destroy();
     await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(source.signals.some(signal => signal.aborted)).toBe(true);
     expect(source.signals.length).toBe(signalCount);

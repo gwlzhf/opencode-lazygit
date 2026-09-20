@@ -1,7 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 
-// @ts-expect-error OpenTUI's bundled Solid runtime entrypoint has no standalone declaration.
-import { ErrorBoundary } from "solid-js/dist/solid.js";
+import { ErrorBoundary } from "solid-js";
 import { type JSX } from "@opentui/solid";
 import type {
   TuiKV,

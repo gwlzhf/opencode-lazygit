@@ -1,10 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 
-// @ts-expect-error OpenTUI's bundled Solid runtime entrypoint has no standalone declaration.
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js/dist/solid.js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { type MouseEvent } from "@opentui/core";
-import { Dynamic } from "@opentui/solid";
-import { useTerminalDimensions } from "@opentui/solid";
+import { useTerminalDimensions, type JSX } from "@opentui/solid";
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
 import { useBindings } from "@opentui/keymap/solid";
 import {
@@ -709,7 +707,7 @@ export function FilesRoute(props: FilesRouteProps) {
   const renderFooter = () => <box height={1} width="100%" overflow="hidden"><text content={footer(currentState())} fg={props.api.theme.current.textMuted} /></box>;
 
   return <box width="100%" height="100%" flexDirection="column" backgroundColor={props.api.theme.current.background}>
-    <Dynamic component={() => renderBody()} />
-    <Dynamic component={() => renderFooter()} />
+    {(() => renderBody()) as unknown as JSX.Element}
+    {(() => renderFooter()) as unknown as JSX.Element}
   </box>;
 }
