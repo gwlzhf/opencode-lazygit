@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import type { ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettingsStore } from "../settings";
-import {
+import productionPlugin, {
   FILES_COMMAND,
   FILES_ROUTE,
   OPEN_CODE_PLUGIN_ID,
@@ -90,6 +90,11 @@ async function activate(apiValue: TuiPluginApi, deps: OpenCodePluginDependencies
 
 
 describe("OpenCode TUI plugin", () => {
+  test("exports a production TUI module with the stable plugin id", () => {
+    expect(productionPlugin.id).toBe(OPEN_CODE_PLUGIN_ID);
+    expect(typeof productionPlugin.tui).toBe("function");
+  });
+
   test("exports host identity and one palette command with a shared Alt+Q binding", async () => {
     const host = api();
     const setup = dependencies();

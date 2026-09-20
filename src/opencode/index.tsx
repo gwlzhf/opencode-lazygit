@@ -165,3 +165,4 @@ export function createOpenCodePlugin(
 }
 
 const productionPlugin = createOpenCodePlugin();
+export default productionPlugin;
