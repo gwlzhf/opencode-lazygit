@@ -103,3 +103,10 @@ test("rejects invalid UTF-8 with a descriptive Git output error", () => {
 
   expect(() => parsePorcelainV1Z(invalid)).toThrow(/UTF-8/i);
 });
+
+test("drops the trailing separator Git puts on untracked directory records", () => {
+  const records = parsePorcelainV1Z(encode("?? nested/\0"));
+
+  expect(records.get("nested")).toMatchObject({ path: "nested", status: "?" });
+  expect(records.has("nested/")).toBe(false);
+});

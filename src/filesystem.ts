@@ -8,6 +8,29 @@ import {
   normalizeProjectPath,
 } from "./contracts";
 
+/**
+ * Raised when a project path exists but is not a regular file: a directory,
+ * a submodule gitlink, an untracked nested repository, or a device node.
+ */
+export class NotRegularFileError extends Error {
+  override readonly name = "NotRegularFileError";
+
+  constructor(readonly projectPath: string) {
+    super(`Selected path is not a regular file: ${projectPath}`);
+  }
+}
+
+/** Directories surface as `EISDIR`/`EPERM` on some platforms instead of a stat mismatch. */
+export function isNotRegularFile(error: unknown): boolean {
+  if (error instanceof NotRegularFileError) return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "EISDIR" || error.code === "EPERM")
+  );
+}
+
 interface BoundedFile {
   readonly bytes: Uint8Array;
   readonly byteSize: number;
@@ -76,6 +99,7 @@ export function validateProjectPath(root: string, projectPath: string): string {
 
 async function readBoundedFile(
   absolutePath: string,
+  displayPath: string,
   signal: AbortSignal,
   maxBytes: number,
 ): Promise<BoundedFile> {
@@ -83,7 +107,7 @@ async function readBoundedFile(
   const file = await open(absolutePath, "r");
   try {
     const stats = await file.stat();
-    if (!stats.isFile()) throw new Error("Selected path is not a regular file");
+    if (!stats.isFile()) throw new NotRegularFileError(displayPath);
     const targetLength = Math.min(stats.size, maxBytes);
     const buffer = new Uint8Array(targetLength);
     let offset = 0;
@@ -138,7 +162,12 @@ export async function readProjectFilePreview(
   maxLines = MAX_PREVIEW_LINES,
 ): Promise<FilePreview> {
   const resolved = await resolveProjectFile(root, projectPath);
-  const file = await readBoundedFile(resolved.absolutePath, signal, maxBytes);
+  const file = await readBoundedFile(
+    resolved.absolutePath,
+    resolved.displayPath,
+    signal,
+    maxBytes,
+  );
   if (file.bytes.includes(0)) {
     return {
       path: resolved.displayPath,

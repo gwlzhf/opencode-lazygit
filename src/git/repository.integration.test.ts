@@ -684,3 +684,21 @@ test("keeps Git's default show semantics for a merge commit", async () => {
   expect(diff).toMatchObject({ oid, kind: "diff" });
   expect(diff.lines.join("\n")).toBe(expected);
 });
+
+test("inspects a repository containing an untracked nested repository", async () => {
+  const root = await initializeRepository();
+  await mkdir(join(root, "nested"), { recursive: true });
+  await git(join(root, "nested"), "init", "--quiet");
+  await writeFile(join(root, "nested", "inner.ts"), "inner\n");
+  const repository = await openRepository(root);
+  const signal = new AbortController().signal;
+
+  const inspection = await repository.inspect(signal);
+
+  expect(inspection.changes.get("nested")).toMatchObject({ status: "?" });
+  expect(inspection.allFiles).toContain("nested");
+  expect(await repository.contentHash("nested", signal)).toBeNull();
+  const preview = await repository.preview("nested", signal);
+  expect(preview.kind).toBe("error");
+  expect(preview.error).toMatch(/not a regular file/);
+});

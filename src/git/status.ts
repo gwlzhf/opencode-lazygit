@@ -31,6 +31,15 @@ export class GitOutputError extends Error {
   }
 }
 
+/**
+ * Git reports an untracked directory it cannot descend into — a nested
+ * repository, or an ignored-but-present tree — as `dir/`. The trailing
+ * separator is not part of the path the rest of the panel works with.
+ */
+function stripTrailingSlash(path: string): string {
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+}
+
 function decodeOutput(bytes: Uint8Array): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -95,7 +104,7 @@ export function parsePorcelainV1Z(bytes: Uint8Array): Map<string, ChangeRecord> 
 
     const index = pair[0] as string;
     const worktree = pair[1] as string;
-    const path = normalizeProjectPath(rawPath);
+    const path = stripTrailingSlash(normalizeProjectPath(rawPath));
     const hasOriginalPath =
       index === "R" || index === "C" || worktree === "R" || worktree === "C";
 
@@ -107,7 +116,7 @@ export function parsePorcelainV1Z(bytes: Uint8Array): Map<string, ChangeRecord> 
           `Malformed Git status record ${recordNumber}: rename/copy source path is missing`,
         );
       }
-      oldPath = normalizeProjectPath(original);
+      oldPath = stripTrailingSlash(normalizeProjectPath(original));
       cursor += 1;
     }
 

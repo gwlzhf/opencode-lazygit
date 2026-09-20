@@ -15,6 +15,7 @@ import {
   normalizeProjectPath,
 } from "../contracts";
 import {
+  isNotRegularFile,
   readProjectFilePreview,
   resolveProjectFile,
   validateProjectPath,
@@ -116,7 +117,14 @@ function parseNulPaths(bytes: Uint8Array): string[] {
   const unique = new Set<string>();
   for (const field of fields) {
     if (field.length === 0) throw new GitOutputError("Malformed git ls-files output: empty path");
-    unique.add(normalizeProjectPath(field));
+    // `--others` reports a nested repository as `dir/`; drop the separator so
+    // the entry matches the status record and the tree node for the same path.
+    const normalized = normalizeProjectPath(field);
+    unique.add(
+      normalized.length > 1 && normalized.endsWith("/")
+        ? normalized.slice(0, -1)
+        : normalized,
+    );
   }
   return [...unique].sort(compareCaseInsensitive);
 }
@@ -387,7 +395,9 @@ export class GitRepository {
           });
         }
       } catch (error) {
-        if (isMissingFile(error)) continue;
+        // Submodules and untracked nested repositories appear in `git status`
+        // as a single directory entry; they carry no line counts of their own.
+        if (isMissingFile(error) || isNotRegularFile(error)) continue;
         throw error;
       }
     }
@@ -477,10 +487,18 @@ export class GitRepository {
       throw error;
     }
     throwIfAborted(signal);
-    const file = await open(resolved.absolutePath, "r");
+    let file: Awaited<ReturnType<typeof open>>;
+    try {
+      file = await open(resolved.absolutePath, "r");
+    } catch (error) {
+      if (isMissingFile(error) || isNotRegularFile(error)) return null;
+      throw error;
+    }
     const digest = createHash("sha256");
     const buffer = new Uint8Array(HASH_BUFFER_BYTES);
     try {
+      // A submodule or nested repository has no file content to fingerprint.
+      if (!(await file.stat()).isFile()) return null;
       while (true) {
         throwIfAborted(signal);
         const result = await file.read(buffer, 0, buffer.byteLength, null);
