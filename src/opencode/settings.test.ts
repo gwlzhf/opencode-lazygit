@@ -6,6 +6,7 @@ function kv(initial: unknown = DEFAULT_PANEL_SETTINGS) {
   let value = initial;
   const writes: Array<{ key: string; value: unknown }> = [];
   return {
+    ready: true,
     writes,
     get<T>(key: string, fallback?: T): T {
       expect(key).toBe(OPEN_CODE_SETTINGS_KEY);

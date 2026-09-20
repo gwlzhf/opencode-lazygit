@@ -118,7 +118,7 @@ describe("OpenCode TUI plugin", () => {
     (host.api.state as { ready: boolean }).ready = false;
     const setup = dependencies();
     await activate(host.api, setup.value);
-    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0];
+    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0]!;
     await command.run();
     expect(host.toasts).toEqual([{ variant: "warning", message: "Files review is unavailable until project paths finish syncing." }]);
     expect(host.navigations).toEqual([]);
@@ -130,7 +130,7 @@ describe("OpenCode TUI plugin", () => {
     let attempts = 0;
     const setup = dependencies({ prepareSessionBaseline: async cwd => { attempts += 1; setup.calls.push(`baseline:${cwd}`); await baseline.promise; } });
     await activate(host.api, setup.value);
-    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0];
+    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0]!;
     const opening = command.run();
     await Promise.resolve();
     expect(attempts).toBe(1);
@@ -147,7 +147,7 @@ describe("OpenCode TUI plugin", () => {
     const host = api();
     const setup = dependencies({ prepareSessionBaseline: async () => { throw new Error("Git unavailable"); } });
     await activate(host.api, setup.value);
-    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0];
+    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0]!;
     await command.run();
     expect(host.toasts).toEqual([{ variant: "warning", message: "Unable to prepare the files review session baseline: Git unavailable" }]);
     expect(host.navigations).toEqual([{ name: FILES_ROUTE }]);
@@ -180,7 +180,7 @@ describe("OpenCode TUI plugin", () => {
     const host = api("/workspace", true);
     const setup = dependencies({ renderFilesRoute: () => { throw new Error("render failed"); } });
     await activate(host.api, setup.value);
-    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0];
+    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0]!;
     await command.run();
     await command.run();
     expect(host.navigations).toEqual([
