@@ -1,10 +1,9 @@
-# Pi Files Review
+# Opencode Files Review
 
 Pi Files Review is a read-only review panel for Oh My Pi (OMP) and OpenCode. It provides a keyboard-driven project tree and a selected-file diff or content preview without replacing the editor or leaving the host terminal.
 
 ## Prerequisites
 
-- Oh My Pi (OMP) `>=18.0.11 <19`
 - OpenCode `>=1.18.31 <2` (for the native TUI route)
 - Bun 1.3.14 or newer
 - Git installed and available on `PATH` for Git mode
