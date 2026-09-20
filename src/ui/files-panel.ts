@@ -164,6 +164,7 @@ export class FilesPanel implements Component {
       return;
     }
     if (matchesKey(data, "f5") || matchesKey(data, "r")) {
+      this.#clearSelection();
       this.#controller.refresh();
       return;
     }
@@ -274,31 +275,53 @@ export class FilesPanel implements Component {
   #handleTreeInput(data: string): void {
     const state = this.#state;
     if (state.leftMode === "log") {
-      if (matchesKey(data, "up") || matchesKey(data, "k")) this.#controller.movePrimarySelection(-1);
-      else if (matchesKey(data, "down") || matchesKey(data, "j")) this.#controller.movePrimarySelection(1);
-      else if (matchesKey(data, "enter") || matchesKey(data, "right") || matchesKey(data, "l")) this.#controller.focusPreview();
+      if (matchesKey(data, "up") || matchesKey(data, "k")) {
+        this.#clearSelection();
+        this.#controller.movePrimarySelection(-1);
+      } else if (matchesKey(data, "down") || matchesKey(data, "j")) {
+        this.#clearSelection();
+        this.#controller.movePrimarySelection(1);
+      } else if (matchesKey(data, "enter") || matchesKey(data, "right") || matchesKey(data, "l")) {
+        this.#clearSelection();
+        this.#controller.focusPreview();
+      }
       return;
     }
     if (matchesKey(data, "a")) {
+      this.#clearSelection();
       this.#controller.setViewMode("all");
       return;
     }
     if (matchesKey(data, "m")) {
+      this.#clearSelection();
       this.#controller.setViewMode("modified");
       return;
     }
     if (matchesKey(data, "s")) {
+      this.#clearSelection();
       this.#controller.toggleScope();
       return;
     }
-    if (matchesKey(data, "up") || matchesKey(data, "k")) this.#controller.movePrimarySelection(-1);
-    else if (matchesKey(data, "down") || matchesKey(data, "j")) this.#controller.movePrimarySelection(1);
-    else if (matchesKey(data, "left") || matchesKey(data, "h")) this.#controller.collapseOrParent();
-    else if (matchesKey(data, "right") || matchesKey(data, "l")) {
+    if (matchesKey(data, "up") || matchesKey(data, "k")) {
+      this.#clearSelection();
+      this.#controller.movePrimarySelection(-1);
+    } else if (matchesKey(data, "down") || matchesKey(data, "j")) {
+      this.#clearSelection();
+      this.#controller.movePrimarySelection(1);
+    } else if (matchesKey(data, "left") || matchesKey(data, "h")) {
+      this.#clearSelection();
+      this.#controller.collapseOrParent();
+    } else if (matchesKey(data, "right") || matchesKey(data, "l")) {
       const selected = state.rows[state.selectedIndex];
       if (selected?.node.kind === "file") this.#controller.focusPreview();
-      else this.#controller.expandOrChild();
-    } else if (matchesKey(data, "enter")) this.#controller.openSelection();
+      else {
+        this.#clearSelection();
+        this.#controller.expandOrChild();
+      }
+    } else if (matchesKey(data, "enter")) {
+      this.#clearSelection();
+      this.#controller.openSelection();
+    }
   }
 
   #handlePreviewInput(data: string): void {
@@ -330,8 +353,12 @@ export class FilesPanel implements Component {
     }
     if (event.wheel !== null) {
       const overTree = wide ? event.col <= treeWidth : this.#state.focus === "tree";
-      if (overTree) this.#controller.movePrimarySelection(event.wheel * WHEEL_STEP);
-      else this.#scrollPreview(event.wheel * WHEEL_STEP, this.#previewViewportHeight());
+      if (overTree) {
+        this.#clearSelection();
+        this.#controller.movePrimarySelection(event.wheel * WHEEL_STEP);
+      } else {
+        this.#scrollPreview(event.wheel * WHEEL_STEP, this.#previewViewportHeight());
+      }
       return true;
     }
     const point = this.#previewPoint(event, wide, treeWidth);
@@ -547,6 +574,7 @@ export class FilesPanel implements Component {
   }
 
   #buildPreviewRows(width: number, height: number): readonly string[] {
+    this.#controller.setPreviewWidth(width);
     const state = this.#state;
     this.#lastPreviewWidth = width;
     if (state.leftMode === "log") {

@@ -45,6 +45,7 @@ import {
   type TreeRow,
   visiblePaths,
 } from "../model/tree";
+import { parseUnifiedDiff } from "./diff-view";
 import { type HighlightThemeName, DEFAULT_HIGHLIGHT_THEME } from "./highlight";
 
 export type PanelFocus = "tree" | "preview";
@@ -96,6 +97,7 @@ export interface ReviewControllerOptions {
   readonly onChange: () => void;
 }
 
+const SPLIT_DIFF_MINIMUM_WIDTH = 40;
 const EMPTY_CHANGES: ReadonlyMap<string, ChangeRecord> = new Map();
 
 function errorMessage(error: unknown): string {
@@ -162,6 +164,7 @@ export class ReviewController {
   #treeCollapsed: boolean;
   #diffLayout: DiffLayout;
   #diffContext: number;
+  #previewWidth = 0;
   #highlightTheme: HighlightThemeName;
   #revision = 0;
   #started = false;
@@ -444,6 +447,10 @@ export class ReviewController {
     }
   }
 
+  setPreviewWidth(width: number): void {
+    this.#previewWidth = Math.max(0, Math.floor(width));
+  }
+
   scrollPreview(delta: number, viewportHeight: number): void {
     this.#setPreviewScroll(this.#previewScroll + delta, viewportHeight);
   }
@@ -599,9 +606,13 @@ export class ReviewController {
 
   #setWatchError(error: unknown, generation: number, controller: AbortController): void {
     if (!this.#isCurrentWatch(generation, controller) || isAbort(error, controller.signal)) return;
+    this.#watchGeneration += 1;
+    this.#watchController = undefined;
+    controller.abort();
     this.#watchError = errorMessage(error);
     this.#changed();
   }
+
 
   #beginHistory(): void {
     if (this.#disposed || this.#snapshot?.kind !== "git") return;
@@ -800,7 +811,6 @@ export class ReviewController {
       && this.#previewController === controller
       && this.#previewPath === path;
   }
-
   #cancelPreview(): void {
     this.#previewGeneration += 1;
     this.#previewController?.abort();
@@ -811,13 +821,24 @@ export class ReviewController {
     this.#previewScroll = 0;
   }
 
-  #setPreviewScroll(next: number, height: number): void {
+  #previewLineCount(): number {
     const value = this.#leftMode === "log" ? this.#commitDiff : this.#preview;
-    const lineCount = value === undefined ? 1 : value.kind === "binary" ? 2 : value.kind === "error" ? 1 : value.lines.length;
-    const maximum = Math.max(0, lineCount - Math.max(1, height));
+    if (value === undefined) return 1;
+    if (value.kind === "binary") return value.byteSize === undefined ? 1 : 2;
+    if (value.kind === "error") return 1;
+    if (value.kind === "diff" && this.#diffLayout === "split" && this.#previewWidth >= SPLIT_DIFF_MINIMUM_WIDTH) {
+      const rows = parseUnifiedDiff(value.lines);
+      if (rows !== undefined) return rows.length;
+    }
+    return value.lines.length;
+  }
+
+  #setPreviewScroll(next: number, height: number): void {
+    const maximum = Math.max(0, this.#previewLineCount() - Math.max(1, height));
     const clamped = Math.max(0, Math.min(maximum, next));
     if (clamped === this.#previewScroll) return;
     this.#previewScroll = clamped;
     this.#changed();
   }
+
 }

@@ -32,7 +32,7 @@ class ControlledSource implements ReviewSource {
   readonly previews: { path: string; signal: AbortSignal; deferred: Deferred<FilePreview> }[] = [];
   readonly histories: { signal: AbortSignal; deferred: Deferred<GitLogSnapshot> }[] = [];
   readonly commitDiffs: { oid: string; signal: AbortSignal; deferred: Deferred<CommitDiffPreview> }[] = [];
-  readonly watches: { signal: AbortSignal; onChange: () => void; onError: (error: unknown) => void }[] = [];
+  readonly watches: ({ signal: AbortSignal; onChange: () => void; onError: (error: unknown) => void; deferred: Deferred<void> })[] = [];
 
   refresh({ signal }: { signal: AbortSignal }): Promise<ProjectSnapshot> {
     const value = deferred<ProjectSnapshot>();
@@ -59,8 +59,9 @@ class ControlledSource implements ReviewSource {
   }
 
   watch(options: { signal: AbortSignal; onChange: () => void; onError: (error: unknown) => void }): Promise<void> {
-    this.watches.push(options);
-    return Promise.resolve();
+    const value = deferred<void>();
+    this.watches.push({ ...options, deferred: value });
+    return value.promise;
   }
 }
 
@@ -113,6 +114,30 @@ describe("ReviewController", () => {
     expect(changes).toBeGreaterThan(1);
     controller.dispose();
   });
+  test("retires failed watches once and reinstalls on the next Git refresh", async () => {
+    const source = new ControlledSource();
+    let changes = 0;
+    const controller = new ReviewController({ cwd: "C:/repo", source, onChange: () => changes += 1 });
+    controller.start();
+    source.refreshes[0]?.deferred.resolve(snapshot());
+    await settle();
+    expect(source.watches).toHaveLength(1);
+
+    const beforeError = changes;
+    const watch = source.watches[0];
+    watch?.onError(new Error("\x1b[31mwatch failed\x1b[0m"));
+    watch?.deferred.reject(new Error("watch failed"));
+    await settle();
+    expect(changes).toBe(beforeError + 1);
+    expect(controller.state.watchError).toBe("watch failed");
+    expect(watch?.signal.aborted).toBe(true);
+
+    controller.refresh();
+    source.refreshes[1]?.deferred.resolve(snapshot());
+    await settle();
+    expect(source.watches).toHaveLength(2);
+    controller.dispose();
+  });
 
   test("loads previews, rejects stale results, and clamps scrolling", async () => {
     const source = new ControlledSource();
@@ -135,6 +160,33 @@ describe("ReviewController", () => {
     first?.deferred.resolve({ path: "src/a.ts", kind: "text", lines: ["stale"], truncated: false });
     await settle();
     expect(controller.state.preview?.path).toBe("src/b.ts");
+    controller.dispose();
+  });
+  test("clamps preview scroll against binary rows and split diff rows", async () => {
+    const source = new ControlledSource();
+    const controller = new ReviewController({ cwd: "C:/repo", source, onChange: () => undefined });
+    controller.start();
+    source.refreshes[0]?.deferred.resolve(snapshot());
+    await settle();
+    controller.expandOrChild();
+    source.previews[0]?.deferred.resolve({ path: "src/a.ts", kind: "binary", lines: [], byteSize: 8, truncated: false });
+    await settle();
+    controller.setPreviewWidth(100);
+    controller.scrollPreviewEnd(1);
+    expect(controller.state.previewScroll).toBe(1);
+
+    controller.toggleDiffLayout();
+    controller.cycleDiffContext();
+    const diff = source.previews.at(-1);
+    diff?.deferred.resolve({
+      path: "src/a.ts",
+      kind: "diff",
+      lines: ["@@ -1,2 +1,2 @@", "-old", "+new", " context"],
+      truncated: false,
+    });
+    await settle();
+    controller.scrollPreviewEnd(1);
+    expect(controller.state.previewScroll).toBe(2);
     controller.dispose();
   });
 
