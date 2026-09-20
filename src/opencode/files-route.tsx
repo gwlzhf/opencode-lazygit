@@ -51,6 +51,14 @@ const WHEEL_STEP = 3;
 const BODY_TOP = 1;
 const FOOTER_ROWS = 1;
 const SPLIT_DIFF_MINIMUM_WIDTH = 40;
+export interface FilesRouteDimensions {
+  readonly width: number;
+  readonly height: number;
+}
+
+export function routeDimensionsChanged(previous: FilesRouteDimensions | undefined, next: FilesRouteDimensions): boolean {
+  return previous !== undefined && (previous.width !== next.width || previous.height !== next.height);
+}
 
 export interface FilesRouteProps {
   readonly api: TuiPluginApi;
@@ -118,6 +126,7 @@ function statusColor(status: string | undefined, theme: ThemeTokens): ThemeToken
 }
 
 export function diffColor(kind: string, theme: ThemeTokens): ThemeTokens["text"] {
+  if (kind === "text") return theme.text;
   if (kind === "add") return theme.diffAdded;
   if (kind === "remove") return theme.diffRemoved;
   if (kind === "hunk") return theme.diffHunkHeader;
@@ -126,7 +135,7 @@ export function diffColor(kind: string, theme: ThemeTokens): ThemeTokens["text"]
 
 type PreviewLine = {
   readonly text: string;
-  readonly kind: "context" | "add" | "remove" | "hunk";
+  readonly kind: "text" | "context" | "add" | "remove" | "hunk";
   readonly right?: PreviewLine;
 };
 
@@ -139,9 +148,15 @@ function diffCellKind(kind: string): PreviewLine["kind"] {
   if (kind === "add" || kind === "remove" || kind === "hunk") return kind;
   return "context";
 }
-
-function previewLines(value: FilePreview | CommitDiffPreview | undefined, state: ReviewControllerState, width: number): readonly PreviewLine[] {
-  if (value === undefined || value.kind !== "diff") return (value?.lines ?? []).map(text => ({ text, kind: "context" }));
+export function previewLines(value: FilePreview | CommitDiffPreview | undefined, state: ReviewControllerState, width: number): readonly PreviewLine[] {
+  if (value === undefined) return [];
+  if (value.kind !== "diff") {
+    const gutter = String(Math.max(1, value.lines.length)).length;
+    return value.lines.map((text, index) => ({
+      text: `${String(index + 1).padStart(gutter, " ")} ${text}`,
+      kind: "text" as const,
+    }));
+  }
   if (state.diffLayout !== "split" || width < SPLIT_DIFF_MINIMUM_WIDTH) {
     return value.lines.map(text => ({ text, kind: text.startsWith("@@") ? "hunk" : text.startsWith("+") && !text.startsWith("+++") ? "add" : text.startsWith("-") && !text.startsWith("---") ? "remove" : "context" }));
   }
@@ -158,6 +173,23 @@ function previewLines(value: FilePreview | CommitDiffPreview | undefined, state:
     }
     return { text: row.text, kind: row.kind === "hunk" ? "hunk" : "context" };
   });
+}
+export function splitSelectionSpans(
+  span: SelectionSpan | undefined,
+  leftWidth: number,
+  separatorWidth: number,
+  rightWidth: number,
+): { readonly left: SelectionSpan | undefined; readonly right: SelectionSpan | undefined } {
+  if (span === undefined) return { left: undefined, right: undefined };
+  const rightStart = leftWidth + separatorWidth;
+  return {
+    left: span.from < leftWidth && span.to > 0
+      ? { row: span.row, from: Math.max(0, span.from), to: Math.min(leftWidth, span.to) }
+      : undefined,
+    right: span.to > rightStart && span.from < rightStart + rightWidth
+      ? { row: span.row, from: Math.max(0, span.from - rightStart), to: Math.min(rightWidth, span.to - rightStart) }
+      : undefined,
+  };
 }
 
 function selectionPieces(line: string, span: SelectionSpan | undefined, width: number): readonly [string, string, string] {
@@ -376,6 +408,7 @@ export function FilesRoute(props: FilesRouteProps) {
   let logOffset = 0;
   let lastPreview: FilePreview | CommitDiffPreview | undefined;
   let lastPreviewPath: string | undefined;
+  let lastDimensions: FilesRouteDimensions | undefined;
 
   const currentState = (): ReviewControllerState | undefined => {
     revision();
@@ -489,13 +522,24 @@ export function FilesRoute(props: FilesRouteProps) {
     const theme = props.api.theme.current;
     if (line.right !== undefined) {
       const separator = "  │  ";
-      const leftSelected = span !== undefined && span.from < visibleWidth(line.text) && span.to > 0;
-      const rightStart = visibleWidth(line.text) + visibleWidth(separator);
-      const rightSelected = span !== undefined && span.to > rightStart;
+      const leftWidth = visibleWidth(line.text);
+      const rightWidth = visibleWidth(line.right.text);
+      const spans = splitSelectionSpans(span, leftWidth, visibleWidth(separator), rightWidth);
+      const leftSpan = spans.left;
+      const rightSpan = spans.right;
+      const renderSide = (value: string, kind: PreviewLine["kind"], sideSpan: SelectionSpan | undefined) => {
+        if (sideSpan === undefined) return <span style={{ fg: diffColor(kind, theme) }}>{safeText(value)}</span>;
+        const [before, selected, after] = selectionPieces(value, sideSpan, visibleWidth(value));
+        return <>
+          <span style={{ fg: diffColor(kind, theme) }}>{before}</span>
+          <span style={{ fg: theme.selectedListItemText, bg: theme.backgroundElement }}>{selected}</span>
+          <span style={{ fg: diffColor(kind, theme) }}>{after}</span>
+        </>;
+      };
       return <text>
-        <span style={{ fg: diffColor(line.kind, theme), bg: leftSelected ? theme.backgroundElement : undefined }}>{safeText(line.text)}</span>
+        {renderSide(line.text, line.kind, leftSpan)}
         <span style={{ fg: theme.diffContext }}>{separator}</span>
-        <span style={{ fg: diffColor(line.right.kind, theme), bg: rightSelected ? theme.backgroundElement : undefined }}>{safeText(line.right.text)}</span>
+        {renderSide(line.right.text, line.right.kind, rightSpan)}
       </text>;
     }
     const [before, selected, after] = selectionPieces(text, span, width);
@@ -635,7 +679,10 @@ export function FilesRoute(props: FilesRouteProps) {
 
   const renderBody = () => {
     const state = currentState();
-    const width = dimensions().width;
+    const currentDimensions = { width: dimensions().width, height: dimensions().height };
+    if (routeDimensionsChanged(lastDimensions, currentDimensions)) clearSelection();
+    lastDimensions = currentDimensions;
+    const width = currentDimensions.width;
     if (state?.preview !== lastPreview || state?.commitDiff !== lastPreview || state?.previewPath !== lastPreviewPath) {
       selection = undefined;
       selectionDrag = false;

@@ -12,7 +12,7 @@ import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
 import type { ReviewControllerState } from "../ui/review-controller";
 import type { ReviewController } from "../ui/review-controller";
-import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, createFilesRouteMouseHandlers, diffColor, filesRouteMouseTarget, FilesRoute } from "./files-route";
+import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, createFilesRouteMouseHandlers, diffColor, filesRouteMouseTarget, previewLines, routeDimensionsChanged, splitSelectionSpans, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -252,6 +252,27 @@ describe("FilesRoute", () => {
     handlers.onMouseDrag(mouse(dividerColumn + 8));
     handlers.onMouseUp();
     expect(warned).toBe(true);
+  });
+  test("retires selection state whenever renderer dimensions change", () => {
+    expect(routeDimensionsChanged(undefined, { width: 100, height: 20 })).toBe(false);
+    expect(routeDimensionsChanged({ width: 100, height: 20 }, { width: 101, height: 20 })).toBe(true);
+    expect(routeDimensionsChanged({ width: 100, height: 20 }, { width: 100, height: 21 })).toBe(true);
+    expect(routeDimensionsChanged({ width: 100, height: 20 }, { width: 100, height: 20 })).toBe(false);
+  });
+
+  test("numbers ordinary text previews and keeps host text token", () => {
+    const state = {} as ReviewControllerState;
+    const lines = previewLines({ ...preview, lines: ["alpha", "beta"] }, state, 80);
+    expect(lines.map(line => line.text)).toEqual(["1 alpha", "2 beta"]);
+    expect(lines.every(line => line.kind === "text")).toBe(true);
+    expect(diffColor("text", theme)).toBe(theme.text);
+  });
+
+  test("clips split selection spans independently while retaining side boundaries", () => {
+    expect(splitSelectionSpans({ row: 0, from: 2, to: 15 }, 8, 5, 8)).toEqual({
+      left: { row: 0, from: 2, to: 8 },
+      right: { row: 0, from: 0, to: 2 },
+    });
   });
   test("diff rendering reads live host theme tokens", () => {
     const alternate = { ...theme, diffAdded: RGBA.fromHex("#123456") };
