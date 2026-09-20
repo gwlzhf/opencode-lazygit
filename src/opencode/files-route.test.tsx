@@ -12,7 +12,7 @@ import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
 import type { ReviewControllerState } from "../ui/review-controller";
 import type { ReviewController } from "../ui/review-controller";
-import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, filesRouteMouseTarget, FilesRoute } from "./files-route";
+import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, diffColor, filesRouteMouseTarget, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -192,6 +192,12 @@ describe("FilesRoute", () => {
     expect(filesRouteMouseTarget(mouse(99), routeState, 100)).toBe("preview");
     const divider = Array.from({ length: 100 }, (_, x) => x).find(x => filesRouteMouseTarget(mouse(x), routeState, 100) === "divider");
     expect(divider).toBeDefined();
+  });
+  test("diff rendering reads live host theme tokens", () => {
+    const alternate = { ...theme, diffAdded: RGBA.fromHex("#123456") };
+    expect(diffColor("add", theme)).toBe(theme.diffAdded);
+    expect(diffColor("add", alternate)).toBe(alternate.diffAdded);
+    expect(diffColor("remove", alternate)).toBe(alternate.diffRemoved);
   });
 
 });

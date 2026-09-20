@@ -117,7 +117,7 @@ function statusColor(status: string | undefined, theme: ThemeTokens): ThemeToken
   return theme.warning;
 }
 
-function diffColor(kind: string, theme: ThemeTokens): ThemeTokens["text"] {
+export function diffColor(kind: string, theme: ThemeTokens): ThemeTokens["text"] {
   if (kind === "add") return theme.diffAdded;
   if (kind === "remove") return theme.diffRemoved;
   if (kind === "hunk") return theme.diffHunkHeader;
