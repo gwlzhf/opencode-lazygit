@@ -12,47 +12,38 @@ Pi Files Review is a read-only review panel for Oh My Pi (OMP) and OpenCode. It 
 The extension targets the OMP 18.0.11 interactive TUI and OpenCode 1.18.31+ in Windows PowerShell and Windows Terminal. Git repositories without an initial commit are supported. A non-Git directory uses the read-only filesystem fallback.
 
 ## Install
-Install the published Git tag through OMP:
+
+Install the published Git tag through OpenCode:
 
 ```powershell
-omp plugin install github:gwlzhf/pi-lazygit#v0.4.1
+opencode plugin github:gwlzhf/opencode-lazygit#v0.4.2
 ```
 
-When replacing an installation that came from another source, uninstall it first so OMP can register the Git package cleanly:
-
-```powershell
-omp plugin uninstall pi-lazygit
-omp plugin install github:gwlzhf/pi-lazygit#v0.4.1
-```
-
-Restart OMP after installation so the plugin is loaded and the host session baseline is established.
-
-Install the native OpenCode TUI plugin from the published tag:
-
-```powershell
-opencode plugin github:gwlzhf/opencode-lazygit#v0.4.1
-```
-
-For a local checkout, add the package path to the OpenCode `tui.json` plugin configuration:
+The plugin is also installable by adding the same Git reference to the OpenCode `tui.json` plugin configuration:
 
 ```json
 {
   "$schema": "https://opencode.ai/tui.json",
   "plugin": [
-    "C:\\path\\to\\pi-lazygit"
+    "github:gwlzhf/opencode-lazygit#v0.4.2"
+  ]
+}
+```
+
+For a local checkout, point the same configuration at the package path instead:
+
+```json
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": [
+    "C:\\path\\to\\opencode-lazygit"
   ]
 }
 ```
 
 Restart OpenCode after changing its plugin configuration. The package exposes the host-native `./tui` entrypoint; it does not require the OMP runtime.
 
-For a one-run OMP development session without installing the plugin, run this from the repository root:
-
-```powershell
-omp --extension ./src/index.ts
-```
-
-For a local OpenCode development session, use the same package path in `tui.json` and launch OpenCode from the project directory.
+For a local OpenCode development session, use the package path in `tui.json` and launch OpenCode from the project directory.
 
 ## Open the panel
 
