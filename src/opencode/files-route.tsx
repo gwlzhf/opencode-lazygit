@@ -49,6 +49,8 @@ const WHEEL_STEP = 3;
 const BODY_TOP = 1;
 const FOOTER_ROWS = 1;
 const SPLIT_DIFF_MINIMUM_WIDTH = 40;
+const SPLIT_DIFF_SEPARATOR = "│";
+const SPLIT_DIFF_SEPARATOR_WIDTH = 1;
 export interface FilesRouteDimensions {
   readonly width: number;
   readonly height: number;
@@ -137,9 +139,32 @@ type PreviewLine = {
   readonly right?: PreviewLine;
 };
 
-function splitDiffText(cell: { readonly number: number | undefined; readonly text: string }, gutter: number): string {
+/** Truncate and right-pad to exactly `width` display cells so both columns align. */
+function fitColumn(text: string, width: number): string {
+  if (width <= 0) return "";
+  const clipped = sliceByColumns(safeText(text), 0, width);
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
+
+/** Column widths for the split preview: two equal halves around a one-cell separator. */
+export function splitDiffColumns(width: number): { readonly left: number; readonly right: number } {
+  const safeWidth = Math.max(0, Math.floor(width));
+  const left = Math.max(0, Math.floor((safeWidth - SPLIT_DIFF_SEPARATOR_WIDTH) / 2));
+  return { left, right: Math.max(0, safeWidth - SPLIT_DIFF_SEPARATOR_WIDTH - left) };
+}
+
+function splitDiffText(
+  cell: { readonly kind: string; readonly number: number | undefined; readonly text: string },
+  gutter: number,
+  width: number,
+): string {
+  if (width <= 0) return "";
+  if (cell.kind === "empty") return " ".repeat(width);
   const number = cell.number === undefined ? " ".repeat(gutter) : String(cell.number).padStart(gutter, " ");
-  return `${number} ${cell.text}`;
+  const prefix = `${number} `;
+  if (width <= prefix.length) return fitColumn(prefix, width);
+  const marker = cell.kind === "add" ? "+" : cell.kind === "remove" ? "-" : " ";
+  return `${prefix}${fitColumn(`${marker}${cell.text}`, width - prefix.length)}`;
 }
 
 function diffCellKind(kind: string): PreviewLine["kind"] {
@@ -161,12 +186,13 @@ export function previewLines(value: FilePreview | CommitDiffPreview | undefined,
   const rows = parseUnifiedDiff(value.lines);
   if (rows === undefined) return value.lines.map(text => ({ text, kind: "context" }));
   const gutter = diffGutterWidth(rows);
+  const columns = splitDiffColumns(width);
   return rows.map(row => {
     if (row.kind === "pair") {
       return {
-        text: splitDiffText(row.left, gutter),
+        text: splitDiffText(row.left, gutter, columns.left),
         kind: diffCellKind(row.left.kind),
-        right: { text: splitDiffText(row.right, gutter), kind: diffCellKind(row.right.kind) },
+        right: { text: splitDiffText(row.right, gutter, columns.right), kind: diffCellKind(row.right.kind) },
       };
     }
     return { text: row.text, kind: row.kind === "hunk" ? "hunk" : "context" };
@@ -513,13 +539,13 @@ export function FilesRoute(props: FilesRouteProps) {
     return lines.slice(first, first + viewportHeight());
   };
 
-  const previewLineText = (line: PreviewLine): string => line.right === undefined ? line.text : `${line.text}  │  ${line.right.text}`;
+  const previewLineText = (line: PreviewLine): string => line.right === undefined ? line.text : `${line.text}${SPLIT_DIFF_SEPARATOR}${line.right.text}`;
   const renderTextLine = (line: PreviewLine, index: number, width: number) => {
     const text = previewLineText(line);
     const span = selection === undefined ? undefined : selectedSpans(selection, index + 1, width).find(item => item.row === index);
     const theme = props.api.theme.current;
     if (line.right !== undefined) {
-      const separator = "  │  ";
+      const separator = SPLIT_DIFF_SEPARATOR;
       const leftWidth = visibleWidth(line.text);
       const rightWidth = visibleWidth(line.right.text);
       const spans = splitSelectionSpans(span, leftWidth, visibleWidth(separator), rightWidth);

@@ -11,7 +11,7 @@ import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
 import type { ReviewControllerState } from "../ui/review-controller";
 import type { ReviewController } from "../ui/review-controller";
-import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, createFilesRouteMouseHandlers, diffColor, filesRouteMouseTarget, previewLines, routeDimensionsChanged, splitSelectionSpans, FilesRoute } from "./files-route";
+import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, createFilesRouteMouseHandlers, diffColor, filesRouteMouseTarget, previewLines, routeDimensionsChanged, splitDiffColumns, splitSelectionSpans, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -273,6 +273,25 @@ describe("FilesRoute", () => {
     expect(lines.map(line => line.text)).toEqual(["1 alpha", "2 beta"]);
     expect(lines.every(line => line.kind === "text")).toBe(true);
     expect(diffColor("text", theme)).toBe(theme.text);
+  });
+
+  test("pads split diff columns to equal halves so both sides align", () => {
+    const state = { diffLayout: "split" } as ReviewControllerState;
+    const diff = { path: "src/a.ts", kind: "diff", truncated: false, lines: ["@@ -1,2 +1,2 @@", " keep", "-old", "+new"] } as FilePreview;
+    const width = 41;
+    const lines = previewLines(diff, state, width);
+    const pairs = lines.filter(line => line.right !== undefined);
+    expect(pairs.length).toBe(2);
+    for (const line of pairs) {
+      expect(line.text.length).toBe(splitDiffColumns(width).left);
+      expect(line.right!.text.length).toBe(splitDiffColumns(width).right);
+    }
+    expect(pairs[0]!.text).toStartWith("1  keep");
+    expect(pairs[1]!.text).toStartWith("2 -old");
+    expect(pairs[1]!.right!.text).toStartWith("2 +new");
+    expect(splitDiffColumns(width).left + splitDiffColumns(width).right + 1).toBe(width);
+    // Narrow previews keep the unified layout.
+    expect(previewLines(diff, state, 39).every(line => line.right === undefined)).toBe(true);
   });
 
   test("clips split selection spans independently while retaining side boundaries", () => {
