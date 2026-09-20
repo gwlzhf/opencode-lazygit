@@ -102,6 +102,7 @@ export class FilesPanel implements Component {
   #treeOffset = 0;
   #logOffset = 0;
   #lastWidth = 0;
+  #lastTerminalRows = 0;
   #lastPreviewWidth = 0;
   #previewRows: readonly string[] = [];
   #selection: PreviewSelection | undefined;
@@ -223,12 +224,13 @@ export class FilesPanel implements Component {
     if (this.#state.focus === "preview") this.#handlePreviewInput(data);
     else this.#handleTreeInput(data);
   }
-
   render(width: number): readonly string[] {
     const safeWidth = Math.max(1, Math.floor(width));
-    this.#lastWidth = safeWidth;
     const reportedRows = Math.floor(this.#tui.terminal.rows);
     const terminalRows = Number.isFinite(reportedRows) ? Math.max(0, reportedRows) : 0;
+    if (this.#lastWidth !== safeWidth || this.#lastTerminalRows !== terminalRows) this.#retireSelection();
+    this.#lastWidth = safeWidth;
+    this.#lastTerminalRows = terminalRows;
     const state = this.#state;
     const cached = this.#cache;
     if (cached !== undefined && cached.width === safeWidth && cached.rows === terminalRows && cached.revision === state.revision + this.#renderRevision && cached.theme === this.#theme) {

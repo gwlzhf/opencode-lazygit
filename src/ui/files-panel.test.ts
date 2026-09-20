@@ -976,6 +976,25 @@ describe("FilesPanel preview selection", () => {
     expect(panel.render(100).at(-1)).not.toContain("copied");
   });
 
+  test("terminal width and height changes retire stale preview selection", async () => {
+    const { panel, tui } = await previewHarness(["alpha", "bravo"]);
+    panel.handleInput("\x1b[<0;34;2M");
+    panel.handleInput("\x1b[<32;38;2M");
+    panel.handleInput("\x1b[<0;38;2m");
+    expect(panel.render(100).at(-1)).toContain("copied 1 line");
+
+    panel.render(90);
+    expect(panel.render(90).at(-1)).not.toContain("copied");
+
+    panel.render(100);
+    panel.handleInput("\x1b[<0;34;2M");
+    panel.handleInput("\x1b[<32;38;2M");
+    panel.handleInput("\x1b[<0;38;2m");
+    expect(panel.render(100).at(-1)).toContain("copied 1 line");
+    tui.setRows(7);
+    expect(panel.render(100).at(-1)).not.toContain("copied");
+  });
+
   test("a press on the divider drags the width instead of selecting text", async () => {
     const { panel, tui } = await previewHarness(["alpha", "bravo"]);
 
