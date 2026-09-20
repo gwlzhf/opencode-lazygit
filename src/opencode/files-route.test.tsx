@@ -5,10 +5,12 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { KeymapProvider } from "@opentui/keymap/solid";
 import { RGBA } from "@opentui/core";
 import { render } from "@opentui/solid";
+// @ts-expect-error OpenTUI's runtime Solid entrypoint has no standalone declaration.
+import { createRoot } from "solid-js/dist/solid.js";
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
 import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
-import { FilesRoute } from "./files-route";
+import { createFilesRouteBindings, FilesRoute } from "./files-route";
 
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
@@ -85,12 +87,16 @@ async function mount(width: number, height: number, source: ReviewSource, settin
   const copied: string[] = [];
   const toasts: unknown[] = [];
   const rendererCopy = setup.renderer.copyToClipboardOSC52.bind(setup.renderer);
-  setup.renderer.copyToClipboardOSC52 = ((text: string) => { if (clipboard) copied.push(text); return clipboard; }) as typeof setup.renderer.copyToClipboardOSC52;
   const instance = api(setup.renderer, modePushes, copied, toasts, keymap);
-  await render(() => <KeymapProvider keymap={keymap as never}><FilesRoute api={instance} cwd="/fixture" settings={settings} createSource={() => source} onClose={() => modePushes.push("close")} /></KeymapProvider>, setup.renderer);
+  let disposeRoot = (): void => undefined;
+  createRoot((dispose: () => void) => {
+    disposeRoot = dispose;
+    void render(() => <KeymapProvider keymap={keymap as never} children={(() => <FilesRoute api={instance} cwd="/fixture" settings={settings} createSource={() => source} onClose={() => modePushes.push("close")} />) as never} />, setup.renderer);
+  });
+  await new Promise<void>(resolve => setTimeout(resolve, 10));
   await setup.renderOnce();
   await setup.flush();
-  return { setup, layers, modePushes, copied, toasts, settings, rendererCopy };
+  return { setup, layers, modePushes, copied, toasts, settings, rendererCopy, disposeRoot };
 }
 
 describe("FilesRoute", () => {
@@ -111,18 +117,21 @@ describe("FilesRoute", () => {
   test("registers route mode and all keyboard bindings without Pi palette cycling", async () => {
     const mounted = await mount(100, 20, controlledSource());
     expect(mounted.modePushes).toContain("pi-lazygit.files");
-    const bindings = (mounted.layers[0]?.bindings ?? []) as readonly { key: string }[];
-    expect(bindings.some(binding => binding.key === "escape") || bindings.length === 0).toBe(true);
-    expect(bindings.some(binding => binding.key === "pageup") || bindings.length === 0).toBe(true);
-    expect(bindings.some(binding => binding.key === "t")).toBe(false);
+    const keys = new Set(createFilesRouteBindings(() => undefined).map(binding => binding.key));
+    for (const key of ["up", "down", "left", "right", "j", "k", "h", "l", "enter", "tab", "shift+tab", "[", "]", "ctrl+left", "ctrl+right", "\\", "ctrl+b", "d", "c", "m", "a", "s", "g", "f5", "r", "pageup", "pagedown", "home", "end", "escape"]) expect(keys.has(key)).toBe(true);
+    expect(keys.has("t")).toBe(false);
     mounted.setup.renderer.destroy();
   });
 
   test("cleanup aborts source work and flushes settings", async () => {
     const source = controlledSource();
     const mounted = await mount(100, 20, source);
-    mounted.setup.renderer.destroy();
-    expect(source.signals.length).toBeGreaterThan(0);
+    const signalCount = source.signals.length;
+    mounted.disposeRoot();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(source.signals.some(signal => signal.aborted)).toBe(true);
+    expect(source.signals.length).toBe(signalCount);
+    expect(mounted.settings.flushed()).toBe(1);
   });
 
 });

@@ -123,34 +123,40 @@ function diffColor(kind: string, theme: ThemeTokens): ThemeTokens["text"] {
   return theme.diffContext;
 }
 
+type PreviewLine = {
+  readonly text: string;
+  readonly kind: "context" | "add" | "remove" | "hunk";
+  readonly right?: PreviewLine;
+};
+
 function splitDiffText(cell: { readonly number: number | undefined; readonly text: string }, gutter: number): string {
   const number = cell.number === undefined ? " ".repeat(gutter) : String(cell.number).padStart(gutter, " ");
   return `${number} ${cell.text}`;
 }
 
-function previewLines(value: FilePreview | CommitDiffPreview | undefined, state: ReviewControllerState, width: number): readonly string[] {
-  if (value === undefined || value.kind !== "diff") return value?.lines ?? [];
-  if (state.diffLayout !== "split" || width < SPLIT_DIFF_MINIMUM_WIDTH) return value.lines;
-  const rows = parseUnifiedDiff(value.lines);
-  if (rows === undefined) return value.lines;
-  const gutter = diffGutterWidth(rows);
-  return rows.map(row => {
-    if (row.kind === "pair") return `${splitDiffText(row.left, gutter)}  │  ${splitDiffText(row.right, gutter)}`;
-    return row.text;
-  });
+function diffCellKind(kind: string): PreviewLine["kind"] {
+  if (kind === "add" || kind === "remove" || kind === "hunk") return kind;
+  return "context";
 }
 
-function previewRowColor(line: string, value: FilePreview | CommitDiffPreview | undefined, state: ReviewControllerState, theme: ThemeTokens): ThemeTokens["text"] {
-  if (value?.kind !== "diff") return theme.text;
-  if (state.diffLayout === "split" && line.includes("│")) {
-    if (line.includes("+")) return theme.diffAdded;
-    if (line.includes("-")) return theme.diffRemoved;
-    return theme.diffContext;
+function previewLines(value: FilePreview | CommitDiffPreview | undefined, state: ReviewControllerState, width: number): readonly PreviewLine[] {
+  if (value === undefined || value.kind !== "diff") return (value?.lines ?? []).map(text => ({ text, kind: "context" }));
+  if (state.diffLayout !== "split" || width < SPLIT_DIFF_MINIMUM_WIDTH) {
+    return value.lines.map(text => ({ text, kind: text.startsWith("@@") ? "hunk" : text.startsWith("+") && !text.startsWith("+++") ? "add" : text.startsWith("-") && !text.startsWith("---") ? "remove" : "context" }));
   }
-  if (line.startsWith("@@")) return theme.diffHunkHeader;
-  if (line.startsWith("+") && !line.startsWith("+++")) return theme.diffAdded;
-  if (line.startsWith("-") && !line.startsWith("---")) return theme.diffRemoved;
-  return theme.diffContext;
+  const rows = parseUnifiedDiff(value.lines);
+  if (rows === undefined) return value.lines.map(text => ({ text, kind: "context" }));
+  const gutter = diffGutterWidth(rows);
+  return rows.map(row => {
+    if (row.kind === "pair") {
+      return {
+        text: splitDiffText(row.left, gutter),
+        kind: diffCellKind(row.left.kind),
+        right: { text: splitDiffText(row.right, gutter), kind: diffCellKind(row.right.kind) },
+      };
+    }
+    return { text: row.text, kind: row.kind === "hunk" ? "hunk" : "context" };
+  });
 }
 
 function selectionPieces(line: string, span: SelectionSpan | undefined, width: number): readonly [string, string, string] {
@@ -160,6 +166,26 @@ function selectionPieces(line: string, span: SelectionSpan | undefined, width: n
   const selected = sliceByColumns(plain, span.from, span.to - span.from);
   const after = sliceByColumns(plain, span.to, Math.max(0, width - span.to));
   return [before, selected, after];
+}
+
+export function createFilesRouteBindings(handleKey: (key: string) => void) {
+  return [
+    { key: "up", cmd: () => handleKey("up") }, { key: "down", cmd: () => handleKey("down") },
+    { key: "left", cmd: () => handleKey("left") }, { key: "right", cmd: () => handleKey("right") },
+    { key: "j", cmd: () => handleKey("j") }, { key: "k", cmd: () => handleKey("k") },
+    { key: "h", cmd: () => handleKey("h") }, { key: "l", cmd: () => handleKey("l") },
+    { key: "enter", cmd: () => handleKey("enter") }, { key: "tab", cmd: () => handleKey("tab") },
+    { key: "shift+tab", cmd: () => handleKey("shift+tab") }, { key: "[", cmd: () => handleKey("[") },
+    { key: "]", cmd: () => handleKey("]") }, { key: "ctrl+left", cmd: () => handleKey("ctrl+left") },
+    { key: "ctrl+right", cmd: () => handleKey("ctrl+right") }, { key: "\\", cmd: () => handleKey("\\") },
+    { key: "ctrl+b", cmd: () => handleKey("ctrl+b") }, { key: "d", cmd: () => handleKey("d") },
+    { key: "c", cmd: () => handleKey("c") }, { key: "m", cmd: () => handleKey("m") },
+    { key: "a", cmd: () => handleKey("a") }, { key: "s", cmd: () => handleKey("s") },
+    { key: "g", cmd: () => handleKey("g") }, { key: "f5", cmd: () => handleKey("f5") },
+    { key: "r", cmd: () => handleKey("r") }, { key: "pageup", cmd: () => handleKey("pageup") },
+    { key: "pagedown", cmd: () => handleKey("pagedown") }, { key: "home", cmd: () => handleKey("home") },
+    { key: "end", cmd: () => handleKey("end") }, { key: "escape", cmd: () => handleKey("escape") },
+  ];
 }
 
 export function FilesRoute(props: FilesRouteProps) {
@@ -188,8 +214,7 @@ export function FilesRoute(props: FilesRouteProps) {
     copyNotice = undefined;
   };
 
-  const viewportHeight = (): number => Math.max(1, dimensions().height - BODY_TOP - FOOTER_ROWS);
-
+  const viewportHeight = (): number => Math.max(1, dimensions().height - BODY_TOP - FOOTER_ROWS - 1);
   const scrollPreview = (delta: number): void => {
     const active = controller;
     const before = active?.state.previewScroll;
@@ -217,9 +242,10 @@ export function FilesRoute(props: FilesRouteProps) {
       return;
     }
     if (key === "tab" || key === "shift+tab") {
-      clearSelection();
-      if (state.treeCollapsed) active.setTreeCollapsed(false);
-      else active.toggleFocus();
+      if (state.treeCollapsed) {
+        clearSelection();
+        active.setTreeCollapsed(false);
+      } else active.toggleFocus();
       return;
     }
     if (key === "\\" || key === "ctrl+b") {
@@ -260,7 +286,12 @@ export function FilesRoute(props: FilesRouteProps) {
       else if (key === "pagedown") scrollPreview(viewportHeight());
       return;
     }
-    if (key === "a" && state.leftMode === "files") { clearSelection(); active.setViewMode("all"); return; }
+    if (state.leftMode === "log") {
+      if (key === "up" || key === "k") active.movePrimarySelection(-1);
+      else if (key === "down" || key === "j") active.movePrimarySelection(1);
+      else if (key === "enter" || key === "right" || key === "l") active.focusPreview();
+      return;
+    }
     if (key === "m" && state.leftMode === "files") { clearSelection(); active.setViewMode("modified"); return; }
     if (key === "s" && state.leftMode === "files") { clearSelection(); active.toggleScope(); return; }
     if (key === "up" || key === "k") { clearSelection(); active.movePrimarySelection(-1); return; }
@@ -269,36 +300,16 @@ export function FilesRoute(props: FilesRouteProps) {
     if (key === "right" || key === "l") {
       clearSelection();
       const selected = state.rows[state.selectedIndex];
-      if (state.leftMode === "log" || selected?.node.kind === "file") active.focusPreview();
+      if (selected?.node.kind === "file") active.focusPreview();
       else active.expandOrChild();
       return;
     }
     if (key === "enter") { clearSelection(); active.openSelection(); }
   };
-  try {
-    useBindings(() => ({
-      priority: 100,
-      bindings: [
-        { key: "up", cmd: () => handleKey("up") }, { key: "down", cmd: () => handleKey("down") },
-        { key: "left", cmd: () => handleKey("left") }, { key: "right", cmd: () => handleKey("right") },
-        { key: "j", cmd: () => handleKey("j") }, { key: "k", cmd: () => handleKey("k") },
-        { key: "h", cmd: () => handleKey("h") }, { key: "l", cmd: () => handleKey("l") },
-        { key: "enter", cmd: () => handleKey("enter") }, { key: "tab", cmd: () => handleKey("tab") },
-        { key: "shift+tab", cmd: () => handleKey("shift+tab") }, { key: "[", cmd: () => handleKey("[") },
-        { key: "]", cmd: () => handleKey("]") }, { key: "ctrl+left", cmd: () => handleKey("ctrl+left") },
-        { key: "ctrl+right", cmd: () => handleKey("ctrl+right") }, { key: "\\", cmd: () => handleKey("\\") },
-        { key: "ctrl+b", cmd: () => handleKey("ctrl+b") }, { key: "d", cmd: () => handleKey("d") },
-        { key: "c", cmd: () => handleKey("c") }, { key: "m", cmd: () => handleKey("m") },
-        { key: "a", cmd: () => handleKey("a") }, { key: "s", cmd: () => handleKey("s") },
-        { key: "g", cmd: () => handleKey("g") }, { key: "f5", cmd: () => handleKey("f5") },
-        { key: "r", cmd: () => handleKey("r") }, { key: "pageup", cmd: () => handleKey("pageup") },
-        { key: "pagedown", cmd: () => handleKey("pagedown") }, { key: "home", cmd: () => handleKey("home") },
-        { key: "end", cmd: () => handleKey("end") }, { key: "escape", cmd: () => handleKey("escape") },
-      ],
-    }));
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes("Keymap not found")) throw error;
-  }
+  useBindings(() => ({
+    priority: 100,
+    bindings: createFilesRouteBindings(handleKey),
+  }));
 
   const previewPoint = (event: MouseEvent, state: ReviewControllerState, width: number): SelectionPoint | undefined => {
     const wide = isWide(width, state);
@@ -307,8 +318,8 @@ export function FilesRoute(props: FilesRouteProps) {
     if (!wide && state.focus !== "preview") return undefined;
     const previewWidth = Math.max(0, (wide ? width - left : width) - 2);
     const col = event.x - (wide ? left + 1 : 1);
-    const row = event.y - BODY_TOP - 1;
-    if (row < 0 || row >= viewportHeight() - 1 || col < 0 || col >= previewWidth) return undefined;
+    const row = event.y - BODY_TOP;
+    if (row < 0 || row >= viewportHeight() || col < 0 || col >= previewWidth) return undefined;
     return { row, col };
   };
 
@@ -319,9 +330,8 @@ export function FilesRoute(props: FilesRouteProps) {
     const width = isWide(dimensions().width, state)
       ? Math.max(0, dimensions().width - treeWidth(dimensions().width, state.treeRatio) - 2)
       : Math.max(0, dimensions().width - 2);
-    const rows = buildPreviewLines(state, width);
+    const rows = buildPreviewLines(state, width).map(line => previewLineText(line));
     const text = selectionText(rows, selection, width);
-    if (text.length === 0) return;
     if (!props.api.renderer.copyToClipboardOSC52(text)) {
       props.api.ui.toast({ variant: "warning", message: "Terminal clipboard copy is unavailable." });
       return;
@@ -339,15 +349,10 @@ export function FilesRoute(props: FilesRouteProps) {
     const wide = isWide(width, state);
     const left = wide ? treeWidth(width, state.treeRatio) : 0;
     const bodyRow = event.y - BODY_TOP;
-    if (bodyRow < 0 || bodyRow >= viewportHeight()) return;
-    if (wide && event.x === left) {
-      dividerDrag = true;
-      return;
-    }
-    if (wide && event.x < left) {
+    if (wide && event.x < left || !wide && state.focus === "tree") {
       clearSelection();
       active.focusTree();
-      const index = (state.leftMode === "log" ? logOffset : treeOffset) + bodyRow - 1;
+      const index = (state.leftMode === "log" ? logOffset : treeOffset) + bodyRow;
       active.selectPrimary(index);
       return;
     }
@@ -389,7 +394,7 @@ export function FilesRoute(props: FilesRouteProps) {
     if (disposed || active === undefined || state === undefined || event.scroll === undefined) return;
     const width = dimensions().width;
     const left = isWide(width, state) ? treeWidth(width, state.treeRatio) : 0;
-    if (isWide(width, state) && event.x < left) {
+    if ((isWide(width, state) && event.x < left) || (!isWide(width, state) && state.focus === "tree")) {
       clearSelection();
       active.movePrimarySelection(event.scroll.direction === "down" ? WHEEL_STEP : -WHEEL_STEP);
     } else {
@@ -398,21 +403,30 @@ export function FilesRoute(props: FilesRouteProps) {
     }
   };
 
-  const buildPreviewLines = (state: ReviewControllerState, width: number): readonly string[] => {
+  const buildPreviewLines = (state: ReviewControllerState, width: number): readonly PreviewLine[] => {
+    controller?.setPreviewWidth(width);
     const value = state.leftMode === "log" ? state.commitDiff : state.preview;
     const lines = previewLines(value, state, width);
     const first = Math.max(0, Math.min(state.previewScroll, Math.max(0, lines.length - viewportHeight())));
     return lines.slice(first, first + viewportHeight());
   };
 
-  const renderTextLine = (line: string, index: number, color: ThemeTokens["text"], width: number) => {
+  const previewLineText = (line: PreviewLine): string => line.right === undefined ? line.text : `${line.text}  │  ${line.right.text}`;
+
+  const renderTextLine = (line: PreviewLine, index: number, width: number) => {
+    const text = previewLineText(line);
     const span = selection === undefined ? undefined : selectedSpans(selection, index + 1, width).find(item => item.row === index);
-    const [before, selected, after] = selectionPieces(line, span, width);
-    if (span === undefined) return <text content={safeText(line)} fg={color} />;
-    return <text>
-      <span style={{ fg: color }}>{before}</span>
+    const [before, selected, after] = selectionPieces(text, span, width);
+    if (span !== undefined) return <text>
+      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{before}</span>
       <span style={{ fg: props.api.theme.current.selectedListItemText, bg: props.api.theme.current.backgroundElement }}>{selected}</span>
-      <span style={{ fg: color }}>{after}</span>
+      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{after}</span>
+    </text>;
+    if (line.right === undefined) return <text content={safeText(text)} fg={diffColor(line.kind, props.api.theme.current)} />;
+    return <text>
+      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{safeText(line.text)}</span>
+      <span style={{ fg: props.api.theme.current.diffContext }}>  │  </span>
+      <span style={{ fg: diffColor(line.right.kind, props.api.theme.current) }}>{safeText(line.right.text)}</span>
     </text>;
   };
 
@@ -429,8 +443,7 @@ export function FilesRoute(props: FilesRouteProps) {
     </>;
     if (value.kind === "error") return <text content={`Error: ${safeText(value.error ?? "Unable to load file")}`} fg={theme.error} />;
     const lines = buildPreviewLines(state, width);
-    if (lines.length === 0) return <text content="(empty)" fg={theme.textMuted} />;
-    return <For each={lines}>{(line: string, index: () => number) => renderTextLine(line, index(), previewRowColor(line, value, state, theme), width)}</For>;
+    return <For each={lines}>{(line: PreviewLine, index: () => number) => renderTextLine(line, index(), width)}</For>;
   };
 
   const renderTree = (state: ReviewControllerState | undefined, width: number) => {
@@ -488,8 +501,8 @@ export function FilesRoute(props: FilesRouteProps) {
     else if (state.previewLoading) pieces.push("loading preview");
     else if (project?.baselineEstablishedAt !== undefined) pieces.push(`baseline ${new Date(project.baselineEstablishedAt).toISOString()}`);
     if (copyNotice !== undefined) pieces.push(copyNotice);
-    pieces.push(`${state.diffLayout} diff`, `ctx ${diffContextLabel(state.diffContext)}`);
-    pieces.push(state.focus === "preview" ? "Esc tree" : "Esc close", "Tab focus", "drag copy");
+    const activePreview = state.leftMode === "log" ? state.commitDiff : state.preview;
+    if (activePreview?.kind === "diff") pieces.push(`${state.diffLayout} diff`, `ctx ${diffContextLabel(state.diffContext)}`);
     return pieces.join(" · ");
   };
 

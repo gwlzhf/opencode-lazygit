@@ -40,9 +40,9 @@ export function isEmptySelection(selection: PreviewSelection): boolean {
   return selection.anchor.row === selection.head.row && selection.anchor.col === selection.head.col;
 }
 
-/** Remove ANSI/OSC/DCS/other terminal controls before copying or painting. */
 export function sanitizeCopiedText(text: string): string {
   return text
+    .replaceAll("\t", "    ")
     .replace(/(?:\u001b\]|\u009d)[\s\S]*?(?:\u0007|\u001b\\|\u009c)/gu, "")
     .replace(/(?:\u001bP|\u001b_|\u0090|\u0098)[\s\S]*?(?:\u001b\\|\u009c)/gu, "")
     .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/gu, "")
@@ -101,11 +101,19 @@ function cells(text: string): readonly CharacterCell[] {
     const character = String.fromCodePoint(codePoint);
     const width = codePointWidth(codePoint);
     const next = index + character.length;
-    // Combining marks belong to the preceding cell. Keep them in the same
-    // string so copying never splits a grapheme cluster.
     if (width === 0 && result.length > 0) {
       const previous = result[result.length - 1]!;
       result[result.length - 1] = { ...previous, text: previous.text + character };
+    } else if (width > 0 && result.length > 0) {
+      const previous = result[result.length - 1]!;
+      const previousCodePoint = previous.text.codePointAt(previous.text.length - 1) ?? 0;
+      const joined = previous.text.endsWith("\u200d")
+        || (previousCodePoint >= 0x1f1e6 && previousCodePoint <= 0x1f1ff && codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff);
+      if (joined) result[result.length - 1] = { ...previous, text: previous.text + character, to: previous.from + 2 };
+      else {
+        result.push({ text: character, from: column, to: column + width });
+        column += width;
+      }
     } else if (width > 0) {
       result.push({ text: character, from: column, to: column + width });
       column += width;

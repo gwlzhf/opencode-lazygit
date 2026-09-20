@@ -40,6 +40,11 @@ describe("OpenCode selection", () => {
     expect(sliceByColumns("a界b", 1, 2)).toBe("界");
     expect(selectionText(["a界b  "], selection(0, 1, 0, 2), 6)).toBe("界");
   });
+  test("preserves tab indentation and treats joined emoji as one cell", () => {
+    expect(sanitizeCopiedText("\titem")).toBe("    item");
+    expect(visibleWidth("👩‍💻x")).toBe(3);
+    expect(selectionText(["👩‍💻x"], selection(0, 0, 0, 1), 4)).toBe("👩‍💻");
+  });
 
   test("exposes inclusive spans for native styling", () => {
     expect(selectedSpans(selection(0, 2, 2, 1), 3, 8)).toEqual([
