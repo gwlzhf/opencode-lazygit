@@ -1,7 +1,7 @@
 {
   "name": "pi-lazygit",
-  "version": "0.3.2",
-  "description": "Review project files and Git diffs inside Oh My Pi",
+  "version": "0.4.0",
+  "description": "Review project files and Git diffs inside Oh My Pi or OpenCode",
   "type": "module",
   "private": true,
   "files": [
@@ -9,6 +9,8 @@
     "src/filesystem.ts",
     "src/index.ts",
     "src/settings.ts",
+    "src/pi-settings.ts",
+    "src/highlight-theme.ts",
     "src/review-source.ts",
     "src/git/process.ts",
     "src/git/repository.ts",
@@ -20,27 +22,58 @@
     "src/ui/files-panel.ts",
     "src/ui/highlight.ts",
     "src/ui/render.ts",
-    "src/ui/selection.ts"
+    "src/ui/selection.ts",
+    "src/ui/review-controller.ts",
+    "src/opencode/index.tsx",
+    "src/opencode/files-route.tsx",
+    "src/opencode/selection.ts",
+    "src/opencode/settings.ts"
   ],
+  "exports": {
+    "./tui": {
+      "types": "./src/opencode/index.tsx",
+      "import": "./src/opencode/index.tsx"
+    }
+  },
   "engines": {
     "bun": ">=1.3.14"
   },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run typecheck && bun test",
+    "assert-pack": "bun scripts/assert-pack.ts"
   },
   "omp": {
     "extensions": ["./src/index.ts"]
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": ">=18.0.11 <19",
-    "@oh-my-pi/pi-tui": ">=18.0.11 <19"
+    "@oh-my-pi/pi-tui": ">=18.0.11 <19",
+    "@opencode-ai/plugin": ">=1.18.31 <2",
+    "@opentui/core": ">=0.5.11 <1",
+    "@opentui/solid": ">=0.5.11 <1",
+    "@opentui/keymap": ">=0.5.11 <1",
+    "solid-js": ">=1.9.12 <2"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": { "optional": true },
+    "@oh-my-pi/pi-tui": { "optional": true },
+    "@opencode-ai/plugin": { "optional": true },
+    "@opentui/core": { "optional": true },
+    "@opentui/solid": { "optional": true },
+    "@opentui/keymap": { "optional": true },
+    "solid-js": { "optional": true }
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "18.0.11",
     "@oh-my-pi/pi-tui": "18.0.11",
+    "@opencode-ai/plugin": "1.18.31",
+    "@opentui/core": "0.5.11",
+    "@opentui/solid": "0.5.11",
+    "@opentui/keymap": "0.5.11",
     "@types/bun": "latest",
+    "solid-js": "1.9.12",
     "typescript": "^5.9.2"
   }
 }

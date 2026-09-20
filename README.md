@@ -1,50 +1,73 @@
 # Pi Files Review
 
-Pi Files Review is a read-only Oh My Pi extension for reviewing project files and Git changes inside the current OMP terminal session. It provides a keyboard-driven project tree and a selected-file diff or content preview without replacing the editor or leaving OMP.
+Pi Files Review is a read-only review panel for Oh My Pi (OMP) and OpenCode. It provides a keyboard-driven project tree and a selected-file diff or content preview without replacing the editor or leaving the host terminal.
 
 ## Prerequisites
 
-- Oh My Pi (OMP) 18.0.11 or newer
+- Oh My Pi (OMP) `>=18.0.11 <19`
+- OpenCode `>=1.18.31 <2` (for the native TUI route)
 - Bun 1.3.14 or newer
 - Git installed and available on `PATH` for Git mode
 
-The extension targets the OMP 18.0.11 interactive TUI in Windows PowerShell and Windows Terminal. Git repositories without an initial commit are supported. A non-Git directory uses the read-only filesystem fallback.
+The extension targets the OMP 18.0.11 interactive TUI and OpenCode 1.18.31+ in Windows PowerShell and Windows Terminal. Git repositories without an initial commit are supported. A non-Git directory uses the read-only filesystem fallback.
 
 ## Install
-
 Install the published Git tag through OMP:
 
 ```powershell
-omp plugin install github:gwlzhf/pi-lazygit#v0.3.2
+omp plugin install github:gwlzhf/pi-lazygit#v0.4.0
 ```
 
 When replacing an installation that came from another source, uninstall it first so OMP can register the Git package cleanly:
 
 ```powershell
 omp plugin uninstall pi-lazygit
-omp plugin install github:gwlzhf/pi-lazygit#v0.3.2
+omp plugin install github:gwlzhf/pi-lazygit#v0.4.0
 ```
 
-Restart OMP after installation so the plugin is loaded and the session baseline is established.
+Restart OMP after installation so the plugin is loaded and the host session baseline is established.
 
-For a one-run development session without installing the plugin, run this from the repository root:
+Install the native OpenCode TUI plugin from the published tag:
+
+```powershell
+opencode plugin github:gwlzhf/pi-lazygit#v0.4.0
+```
+
+For a local checkout, add the package path to the OpenCode `tui.json` plugin configuration:
+
+```json
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": [
+    "C:\\path\\to\\pi-lazygit"
+  ]
+}
+```
+
+Restart OpenCode after changing its plugin configuration. The package exposes the host-native `./tui` entrypoint; it does not require the OMP runtime.
+
+For a one-run OMP development session without installing the plugin, run this from the repository root:
 
 ```powershell
 omp --extension ./src/index.ts
 ```
 
+For a local OpenCode development session, use the same package path in `tui.json` and launch OpenCode from the project directory.
+
 ## Open the panel
 
-Within an interactive OMP session, use either entry point:
+Within an interactive OMP or OpenCode session, use either entry point:
 
 - `/files`
 - `Alt+Q`
 
-Both open the same review panel. Only one panel can be open at a time. Headless, print, RPC, and ACP invocations do not mount the panel; an attempted invocation reports that the interactive UI is unavailable.
+Both commands invoke the same command (`pi-lazygit.files.open`) and open the same native review route (`pi-lazygit.files`). Only one panel can be open at a time. Headless, print, RPC, and ACP invocations do not mount the panel; an attempted invocation reports that the interactive UI is unavailable.
+
+OMP opens its fullscreen overlay on the terminal's alternate screen. OpenCode mounts the equivalent native OpenTUI route, so both hosts keep their own navigation, focus, mouse, and theme behavior.
 
 At wide terminal widths the project tree and preview appear side by side. At narrow widths, or with the tree collapsed, the tree and preview use a single pane.
 
-The panel opens as a fullscreen overlay on the terminal's alternate screen, so the OMP transcript stays intact underneath and the terminal reports mouse events to the panel. The terminal's own text selection is unavailable while the panel is open; the preview pane provides its own (see [Copying preview text](#copying-preview-text)).
+The terminal's own text selection is unavailable while the panel is open; the preview pane provides its own (see [Copying preview text](#copying-preview-text)).
 
 ## Layout
 
@@ -56,9 +79,7 @@ The tree pane width is adjustable in the side-by-side layout. Drag the divider b
 
 The single-pane layout has no divider to move — the visible pane spans the panel — so the width keys do nothing there and leave the stored width alone, rather than changing it for the next terminal wide enough to show both panes. The footer omits the `[ ] width` hint whenever the panel is showing a single pane, including a collapsed tree.
 
-`\` (also `Ctrl+B`) collapses the tree pane so the preview uses the full panel width, and restores it again. While the tree is collapsed the preview holds focus and every key routes to it; `\`, `Ctrl+B`, `Tab`, `Esc`, `Left`/`h`, and `]` all bring the tree back and return focus to it. `Esc` therefore takes two presses to close the panel from a collapsed tree: one to reveal it, one to close.
-
-The width, collapsed state, syntax theme, and diff view settings are stored in `pi-lazygit.json` in the OMP agent directory (`~/.omp` unless overridden), so they survive panel closes and OMP restarts. Width is stored as a ratio of the panel interior. Rapid changes are coalesced into a single write; unreadable, invalid, or unwritable settings fall back to the 30% width, expanded tree, Pi syntax theme, and unified 3-line diff without interrupting the session.
+OMP stores width, collapsed state, syntax theme, and diff view settings in `pi-lazygit.json` in the OMP agent directory (`~/.omp` unless overridden). OpenCode stores the same schema in its host KV store under `pi-lazygit.panel-settings`. These settings survive panel closes and host restarts. Width is stored as a ratio of the panel interior. Rapid changes are coalesced into a single OMP file write; OpenCode KV writes replace one field immediately. Unreadable, invalid, or unwritable settings fall back to the 30% width, expanded tree, Pi syntax theme, and unified 3-line diff without interrupting the session.
 
 The mouse wheel moves the selection in the tree pane and scrolls the preview pane, following the pointer in the side-by-side layout and the focused pane in the single-pane layout.
 
@@ -72,7 +93,7 @@ The selection is cleared by scrolling, by selecting another file, and by any cha
 
 ## Syntax highlighting
 
-Text previews use OMP's highlighter with four palettes: Pi (default, using the active OMP theme), Catppuccin, Nord, and Tokyo Night. Press `t` from either pane to cycle them in that order. The selected palette affects code syntax only; panel borders, status colors, and diff colors continue to use the active OMP theme. The language is detected from the file path — TypeScript, JavaScript/Node, C#, Go, C/C++, Rust, Python, Java, Kotlin, Ruby, PHP, shell, JSON, YAML, and the other languages OMP supports. Files whose language is unknown or unsupported render as plain text.
+OMP text previews use OMP's highlighter with four palettes: Pi (default, using the active OMP theme), Catppuccin, Nord, and Tokyo Night. Press `t` from either pane to cycle them in that order. This `t` syntax-palette control is Pi-only. OpenCode uses host theme tokens and plain text previews; it does not expose Pi's tokenizer palettes. In both hosts, panel borders, status colors, and diff colors follow the active host theme. The language is detected from the file path — TypeScript, JavaScript/Node, C#, Go, C/C++, Rust, Python, Java, Kotlin, Ruby, PHP, shell, JSON, YAML, and the other languages OMP supports. Files whose language is unknown or unsupported render as plain text.
 
 Diffs keep their per-line added/removed/hunk coloring instead of language highlighting. Preview content is sanitized before it is highlighted, so file contents can never emit their own terminal escape sequences.
 
@@ -107,6 +128,8 @@ History is limited to the 200 most recent commits, and the footer reports `histo
 
 ## Keys
 
+All controls below apply to OMP and OpenCode except the `t` syntax-palette control, which is Pi-only, and the configured OMP `app.interrupt` key. In OpenCode, `Esc` from the preview focuses the tree; `Esc` from the tree or history returns home.
+
 ### Project tree
 
 | Key | Action |
@@ -119,7 +142,7 @@ History is limited to the 200 most recent commits, and the footer reports `histo
 | `Tab` / `Shift+Tab` | Move focus to the preview |
 | `[` / `]` or `Ctrl+Left` / `Ctrl+Right` | Narrow/widen the tree pane |
 | `\` or `Ctrl+B` | Collapse the tree pane |
-| `t` | Cycle Pi, Catppuccin, Nord, and Tokyo Night syntax themes |
+| `t` (Pi only) | Cycle Pi, Catppuccin, Nord, and Tokyo Night syntax themes |
 | `d` | Switch the diff preview between unified and split columns |
 | `c` | Cycle the diff context: 3, 10, 25, full file |
 | `m` | Show modified files |
@@ -127,8 +150,8 @@ History is limited to the 200 most recent commits, and the footer reports `histo
 | `s` | Toggle workspace/session scope |
 | `g` | Switch the left pane between the project tree and the commit history |
 | `F5` / `r` | Refresh Git status, change list, summary, and selected diff or code |
-| `Esc` | Close the panel from the tree |
-| configured OMP `app.interrupt` key | Close the panel from the tree |
+| `Esc` | Close the OMP panel, or return home in OpenCode |
+| configured OMP `app.interrupt` key | Close the panel from the tree (OMP only) |
 
 ### Preview
 
@@ -141,7 +164,7 @@ History is limited to the 200 most recent commits, and the footer reports `histo
 | `Tab` / `Shift+Tab` | Return focus to the project tree |
 | `[` / `]` or `Ctrl+Left` / `Ctrl+Right` | Narrow/widen the tree pane |
 | `\` or `Ctrl+B` | Collapse/restore the tree pane |
-| `t` | Cycle Pi, Catppuccin, Nord, and Tokyo Night syntax themes |
+| `t` (Pi only) | Cycle Pi, Catppuccin, Nord, and Tokyo Night syntax themes |
 | `d` | Switch the diff preview between unified and split columns |
 | `c` | Cycle the diff context: 3, 10, 25, full file |
 | `g` | Switch the left pane between the project tree and the commit history |
@@ -149,7 +172,7 @@ History is limited to the 200 most recent commits, and the footer reports `histo
 | `Left` or `h` | Return focus to the project tree |
 | Left-button drag | Select preview text; release copies it |
 | `Esc` | Return focus to the project tree |
-| configured OMP `app.interrupt` key | Return to the tree; invoke it again from the tree to close |
+| configured OMP `app.interrupt` key | Return to the tree; invoke it again from the tree to close (OMP only) |
 
 Selecting a file begins loading its preview immediately. `Enter` transfers focus to the preview.
 
@@ -166,7 +189,7 @@ Replaces the project tree keys while the history is shown (`g`).
 | `Enter` or `Right` / `l` | Focus the commit diff preview |
 | `g` | Return to the project tree |
 | `F5` / `r` | Reload the commit history |
-| `Esc` | Close the panel |
+| `Esc` | Close the OMP panel, or return home in OpenCode |
 
 ## Review modes and scopes
 
@@ -175,9 +198,9 @@ The view mode and change scope are independent:
 - **Modified mode** (`m`) shows only files changed in the active scope.
 - **All-files mode** (`a`) shows the complete Git-visible project tree. Status markers and totals still reflect the active scope.
 - **Workspace scope** shows current working-tree changes relative to `HEAD`, including staged and unstaged changes.
-- **Session scope** (`s`) shows changes that differ from the repository snapshot captured for the current OMP session.
+- **Session scope** (`s`) shows changes that differ from the repository snapshot captured for the current host session.
 
-The active repository baseline is captured at `session_start`, before the panel opens. A repository first visited later in the same OMP session receives a baseline on first access. Baselines live only in memory and are cleared on `session_shutdown`, so restarting OMP starts a new comparison period.
+The active repository baseline is captured at `session_start`, before the panel opens. A repository first visited later in the same host session receives a baseline on first access. Baselines live only in memory and are cleared with the host's session shutdown, so restarting OMP or OpenCode starts a new comparison period.
 
 Session scope is temporal attribution, not Agent attribution. Any edit made after the baseline counts, including edits made by external programs, other terminals, or people. A file restored to its baseline state disappears from session scope.
 
@@ -185,11 +208,11 @@ Tracked files display a `HEAD`-to-working-tree diff that combines staged and uns
 
 ## Non-Git directories
 
-Outside a Git repository, the panel becomes a read-only filesystem browser rooted at OMP's current working directory. It includes ordinary entries except `.git`. Git status, modified mode, and workspace/session scope are unavailable because there is no Git baseline. Git ignore rules do not apply in filesystem fallback mode.
+Outside a Git repository, the panel becomes a read-only filesystem browser rooted at the host's current working directory. It includes ordinary entries except `.git`. Git status, modified mode, and workspace/session scope are unavailable because there is no Git baseline. Git ignore rules do not apply in filesystem fallback mode.
 
 ## Limits
 
-To keep the OMP session responsive:
+To keep the host session responsive:
 
 - Preview source or diff input is limited to 1 MiB per file.
 - A preview renders at most 5,000 logical lines.
@@ -200,4 +223,4 @@ The panel displays a truncation state when a limit is reached. Git all-files mod
 
 ## Scope and safety
 
-Pi Files Review is intentionally read-only. It does not edit files, stage changes, apply or revert hunks, commit, branch, or otherwise mutate the repository. It also does not claim that an Agent produced every change shown in session scope.
+Pi Files Review is intentionally read-only in both hosts. It does not edit files, stage changes, apply or revert hunks, commit, branch, or otherwise mutate the repository. It also does not claim that an Agent produced every change shown in session scope.
