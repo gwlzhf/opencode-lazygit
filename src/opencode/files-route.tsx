@@ -203,7 +203,7 @@ export function createFilesRouteKeyHandler(context: FilesRouteInputContext): (ke
     const active = context.getController();
     const state = active?.state;
     if (context.isDisposed() || active === undefined || state === undefined) return;
-    if (key === "f5" || key === "r") { context.clearSelection(); active.refresh(); return; }
+    if (key === "escape") { context.focusTreeOrClose(); return; }
     if (key === "tab" || key === "shift+tab") {
       if (state.treeCollapsed) { context.clearSelection(); active.setTreeCollapsed(false); } else active.toggleFocus();
       return;
@@ -272,6 +272,93 @@ export function copyFilesRouteSelection(
   const lines = text.split("\n").length;
   return `copied ${lines} ${lines === 1 ? "line" : "lines"}`;
 }
+export function filesRoutePreviewPoint(event: MouseEvent, state: ReviewControllerState, width: number, viewportHeight: number): SelectionPoint | undefined {
+  const wide = isWide(width, state);
+  const left = wide ? treeWidth(width, state.treeRatio) : 0;
+  if (wide && event.x <= left) return undefined;
+  if (!wide && state.focus !== "preview") return undefined;
+  const previewWidth = Math.max(0, (wide ? width - left : width) - 2);
+  const col = event.x - (wide ? left + 1 : 1);
+  const row = event.y - BODY_TOP;
+  if (row < 0 || row >= viewportHeight || col < 0 || col >= previewWidth) return undefined;
+  return { row, col };
+}
+
+export interface FilesRouteMouseContext {
+  readonly getController: () => ReviewController | undefined;
+  readonly isDisposed: () => boolean;
+  readonly width: () => number;
+  readonly viewportHeight: () => number;
+  readonly treeOffset: () => number;
+  readonly logOffset: () => number;
+  readonly getSelection: () => PreviewSelection | undefined;
+  readonly setSelection: (selection: PreviewSelection | undefined) => void;
+  readonly isSelectionDrag: () => boolean;
+  readonly setSelectionDrag: (active: boolean) => void;
+  readonly isDividerDrag: () => boolean;
+  readonly setDividerDrag: (active: boolean) => void;
+  readonly clearSelection: () => void;
+  readonly bumpRevision: () => void;
+  readonly copySelection: () => void;
+}
+
+export function createFilesRouteMouseHandlers(context: FilesRouteMouseContext): {
+  readonly onMouseDown: (event: MouseEvent) => void;
+  readonly onMouseDrag: (event: MouseEvent) => void;
+  readonly onMouseUp: () => void;
+} {
+  return {
+    onMouseDown: (event: MouseEvent): void => {
+      const active = context.getController();
+      const state = active?.state;
+      if (context.isDisposed() || active === undefined || state === undefined) return;
+      const width = context.width();
+      const target = filesRouteMouseTarget(event, state, width);
+      const bodyRow = event.y - BODY_TOP;
+      if (target === "divider") {
+        context.clearSelection();
+        context.setDividerDrag(true);
+        return;
+      }
+      if (target === "tree") {
+        context.clearSelection();
+        active.focusTree();
+        const index = (state.leftMode === "log" ? context.logOffset() : context.treeOffset()) + bodyRow;
+        active.selectPrimary(index);
+        return;
+      }
+      if (target === "ignore") return;
+      const point = filesRoutePreviewPoint(event, state, width, context.viewportHeight());
+      if (point === undefined) return;
+      active.focusPreview();
+      context.clearSelection();
+      context.setSelectionDrag(true);
+      context.setSelection({ anchor: point, head: point });
+      context.bumpRevision();
+    },
+    onMouseDrag: (event: MouseEvent): void => {
+      const active = context.getController();
+      const state = active?.state;
+      if (context.isDisposed() || active === undefined || state === undefined) return;
+      const width = context.width();
+      if (context.isDividerDrag() && isWide(width, state)) {
+        active.setTreeColumns(event.x, width);
+        return;
+      }
+      const selection = context.getSelection();
+      if (!context.isSelectionDrag() || selection === undefined) return;
+      const point = filesRoutePreviewPoint(event, state, width, context.viewportHeight());
+      if (point === undefined) return;
+      context.setSelection({ anchor: selection.anchor, head: point });
+      context.bumpRevision();
+    },
+    onMouseUp: (): void => {
+      if (context.isSelectionDrag()) context.copySelection();
+      context.setSelectionDrag(false);
+      context.setDividerDrag(false);
+    },
+  };
+}
 
 export function FilesRoute(props: FilesRouteProps) {
 
@@ -328,17 +415,6 @@ export function FilesRoute(props: FilesRouteProps) {
     bindings: createFilesRouteBindings(handleKey),
   }));
 
-  const previewPoint = (event: MouseEvent, state: ReviewControllerState, width: number): SelectionPoint | undefined => {
-    const wide = isWide(width, state);
-    const left = wide ? treeWidth(width, state.treeRatio) : 0;
-    if (wide && event.x <= left) return undefined;
-    if (!wide && state.focus !== "preview") return undefined;
-    const previewWidth = Math.max(0, (wide ? width - left : width) - 2);
-    const col = event.x - (wide ? left + 1 : 1);
-    const row = event.y - BODY_TOP;
-    if (row < 0 || row >= viewportHeight() || col < 0 || col >= previewWidth) return undefined;
-    return { row, col };
-  };
 
   const copySelection = (): void => {
     const state = controller?.state;
@@ -358,57 +434,29 @@ export function FilesRoute(props: FilesRouteProps) {
     copyNotice = notice;
     setRevision((value: number) => value + 1);
   };
+  const mouseHandlers = createFilesRouteMouseHandlers({
+    getController: () => controller,
+    isDisposed: () => disposed,
+    width: () => dimensions().width,
+    viewportHeight,
+    treeOffset: () => treeOffset,
+    logOffset: () => logOffset,
+    getSelection: () => selection,
+    setSelection: value => { selection = value; },
+    isSelectionDrag: () => selectionDrag,
+    setSelectionDrag: value => { selectionDrag = value; },
+    isDividerDrag: () => dividerDrag,
+    setDividerDrag: value => { dividerDrag = value; },
+    clearSelection,
+    bumpRevision: () => setRevision((value: number) => value + 1),
+    copySelection,
+  });
+  const onMouseDown = mouseHandlers.onMouseDown;
+  const onMouseDrag = mouseHandlers.onMouseDrag;
+  const onMouseUp = mouseHandlers.onMouseUp;
 
-  const onMouseDown = (event: MouseEvent): void => {
-    const active = controller;
-    const state = active?.state;
-    if (disposed || active === undefined || state === undefined) return;
-    const width = dimensions().width;
-    const target = filesRouteMouseTarget(event, state, width);
-    const bodyRow = event.y - BODY_TOP;
-    if (target === "divider") {
-      clearSelection();
-      dividerDrag = true;
-      return;
-    }
-    if (target === "tree") {
-      clearSelection();
-      active.focusTree();
-      const index = (state.leftMode === "log" ? logOffset : treeOffset) + bodyRow;
-      active.selectPrimary(index);
-      return;
-    }
-    if (target === "ignore") return;
-    const point = previewPoint(event, state, width);
-    if (point === undefined) return;
-    active.focusPreview();
-    clearSelection();
-    selectionDrag = true;
-    selection = { anchor: point, head: point };
-    setRevision((value: number) => value + 1);
-  };
 
-  const onMouseDrag = (event: MouseEvent): void => {
-    const active = controller;
-    const state = active?.state;
-    if (disposed || active === undefined || state === undefined) return;
-    const width = dimensions().width;
-    if (dividerDrag && isWide(width, state)) {
-      active.setTreeColumns(event.x, width);
-      return;
-    }
-    if (!selectionDrag || selection === undefined) return;
-    const point = previewPoint(event, state, width);
-    if (point === undefined) return;
-    selection = { anchor: selection.anchor, head: point };
-    setRevision((value: number) => value + 1);
-  };
 
-  const onMouseUp = (): void => {
-    if (selectionDrag) copySelection();
-    selectionDrag = false;
-    dividerDrag = false;
-  };
 
   const onMouseScroll = (event: MouseEvent): void => {
     const active = controller;

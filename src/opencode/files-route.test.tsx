@@ -12,7 +12,7 @@ import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
 import type { ReviewControllerState } from "../ui/review-controller";
 import type { ReviewController } from "../ui/review-controller";
-import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, diffColor, filesRouteMouseTarget, FilesRoute } from "./files-route";
+import { copyFilesRouteSelection, createFilesRouteBindings, createFilesRouteKeyHandler, createFilesRouteMouseHandlers, diffColor, filesRouteMouseTarget, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -150,12 +150,17 @@ describe("FilesRoute", () => {
       viewportHeight: () => 10,
       clearSelection: () => undefined,
       scrollPreview: () => calls.push("scroll"),
-      focusTreeOrClose: () => calls.push("escape"),
+      focusTreeOrClose: () => {
+        if (state.focus === "preview") { state.focus = "tree"; calls.push("tree"); } else calls.push("close");
+      },
     });
     const bindings = createFilesRouteBindings(handler);
     const invoke = (key: string): void => bindings.find(binding => binding.key === key)?.cmd();
-    invoke("a"); invoke("down"); invoke("tab"); invoke("]");
-    expect(calls).toEqual(["mode:all", "move:1", "focus", "resize:1"]);
+    invoke("a"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
+    expect(calls).toEqual(["mode:all", "move:1", "focus", "resize:1", "close"]);
+    state.focus = "preview";
+    invoke("escape");
+    expect(calls.at(-1)).toBe("tree");
     state.leftMode = "log";
     invoke("g"); invoke("up"); invoke("enter");
     expect(calls.slice(-3)).toEqual(["history", "move:-1", "preview"]);
@@ -192,6 +197,60 @@ describe("FilesRoute", () => {
     expect(filesRouteMouseTarget(mouse(99), routeState, 100)).toBe("preview");
     const divider = Array.from({ length: 100 }, (_, x) => x).find(x => filesRouteMouseTarget(mouse(x), routeState, 100) === "divider");
     expect(divider).toBeDefined();
+  });
+  test("production mouse handlers resize divider and release preview copy", () => {
+    const state = {
+      focus: "tree", leftMode: "files", treeCollapsed: false, treeRatio: 0.3, rows: [], selectedIndex: 0,
+    };
+    const routeState = state as unknown as ReviewControllerState;
+    const calls: string[] = [];
+    const fake = {
+      state: routeState,
+      setTreeColumns: (column: number) => calls.push(`resize:${column}`),
+      focusTree: () => calls.push("tree"),
+      focusPreview: () => { state.focus = "preview"; calls.push("preview"); },
+      selectPrimary: (index: number) => calls.push(`select:${index}`),
+    } as unknown as ReviewController;
+    let selection: { readonly anchor: { readonly row: number; readonly col: number }; readonly head: { readonly row: number; readonly col: number } } | undefined;
+    let selecting = false;
+    let divider = false;
+    let clipboard = true;
+    let copied = "";
+    let warned = false;
+    const handlers = createFilesRouteMouseHandlers({
+      getController: () => fake,
+      isDisposed: () => false,
+      width: () => 100,
+      viewportHeight: () => 10,
+      treeOffset: () => 0,
+      logOffset: () => 0,
+      getSelection: () => selection,
+      setSelection: value => { selection = value; },
+      isSelectionDrag: () => selecting,
+      setSelectionDrag: value => { selecting = value; },
+      isDividerDrag: () => divider,
+      setDividerDrag: value => { divider = value; },
+      clearSelection: () => { selection = undefined; },
+      bumpRevision: () => undefined,
+      copySelection: () => {
+        const notice = copyFilesRouteSelection(selection, ["const 界 = true;"], 20, text => { copied = text; return clipboard; }, () => { warned = true; });
+        if (notice !== undefined) calls.push(notice);
+      },
+    });
+    const mouse = (x: number) => ({ x, y: 1 } as never);
+    const dividerColumn = Array.from({ length: 100 }, (_, x) => x).find(x => filesRouteMouseTarget(mouse(x), routeState, 100) === "divider")!;
+    handlers.onMouseDown(mouse(dividerColumn));
+    handlers.onMouseDrag(mouse(dividerColumn + 3));
+    handlers.onMouseUp();
+    handlers.onMouseDown(mouse(dividerColumn + 2));
+    handlers.onMouseDrag(mouse(dividerColumn + 8));
+    handlers.onMouseUp();
+    expect(copied.length).toBeGreaterThan(0);
+    clipboard = false;
+    handlers.onMouseDown(mouse(dividerColumn + 2));
+    handlers.onMouseDrag(mouse(dividerColumn + 8));
+    handlers.onMouseUp();
+    expect(warned).toBe(true);
   });
   test("diff rendering reads live host theme tokens", () => {
     const alternate = { ...theme, diffAdded: RGBA.fromHex("#123456") };
