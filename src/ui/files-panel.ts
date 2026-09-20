@@ -50,7 +50,7 @@ import {
   sanitizeTerminalText,
   SPLIT_DIFF_MINIMUM_WIDTH,
 } from "./render";
-import { ReviewController } from "./review-controller";
+import { ReviewController, type ReviewControllerState } from "./review-controller";
 
 export interface FilesPanelOptions {
   readonly cwd: string;
@@ -97,6 +97,7 @@ export class FilesPanel implements Component {
   readonly #highlight: Highlighter | undefined;
   readonly #done: (result: undefined) => void;
   readonly #controller: ReviewController;
+  #lastControllerState: ReviewControllerState | undefined;
 
   #treeOffset = 0;
   #logOffset = 0;
@@ -142,9 +143,16 @@ export class FilesPanel implements Component {
       ...(options.onDiffContextChange === undefined ? {} : { onDiffContextChange: options.onDiffContextChange }),
       highlightTheme: options.highlightTheme ?? DEFAULT_HIGHLIGHT_THEME,
       ...(options.onHighlightThemeChange === undefined ? {} : { onHighlightThemeChange: options.onHighlightThemeChange }),
-      onChange: () => this.#requestRender(),
+      onChange: () => {
+        const next = this.#controller.state;
+        const previous = this.#lastControllerState;
+        this.#lastControllerState = next;
+        if (previous !== undefined && this.#selectionNeedsRetirement(previous, next)) this.#retireSelection();
+        this.#requestRender();
+      },
     };
     this.#controller = new ReviewController(controllerOptions);
+    this.#lastControllerState = this.#controller.state;
   }
 
   start(): void {
@@ -403,11 +411,35 @@ export class FilesPanel implements Component {
     return col < 0 || col >= previewWidth ? undefined : { row, col };
   }
 
-  #clearSelection(): void {
+  #selectionNeedsRetirement(previous: ReviewControllerState, next: ReviewControllerState): boolean {
+    return previous.rows !== next.rows
+      || previous.selectedIndex !== next.selectedIndex
+      || previous.preview !== next.preview
+      || previous.previewPath !== next.previewPath
+      || previous.treeRatio !== next.treeRatio
+      || previous.treeCollapsed !== next.treeCollapsed
+      || previous.diffLayout !== next.diffLayout
+      || previous.diffContext !== next.diffContext
+      || previous.leftMode !== next.leftMode
+      || previous.viewMode !== next.viewMode
+      || previous.scope !== next.scope
+      || previous.history !== next.history
+      || previous.logSelectedIndex !== next.logSelectedIndex
+      || previous.commitDiff !== next.commitDiff;
+  }
+
+  #retireSelection(): void {
     this.#selectionDrag = false;
-    if (this.#selection === undefined && this.#copyNotice === undefined) return;
     this.#selection = undefined;
     this.#copyNotice = undefined;
+  }
+
+  #clearSelection(): void {
+    if (this.#selection === undefined && this.#copyNotice === undefined) {
+      this.#selectionDrag = false;
+      return;
+    }
+    this.#retireSelection();
     this.#requestRender();
   }
 

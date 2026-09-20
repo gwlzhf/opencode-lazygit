@@ -946,6 +946,36 @@ describe("FilesPanel preview selection", () => {
     expect(scrolled.join("\n")).not.toContain("\x1b[7m");
   });
 
+  test("automatic watch refresh retires stale preview selection", async () => {
+    vi.useFakeTimers();
+    try {
+      const { panel, source } = await previewHarness(["alpha", "bravo"]);
+      panel.handleInput("\x1b[<0;34;2M");
+      panel.handleInput("\x1b[<32;38;2M");
+      panel.handleInput("\x1b[<0;38;2m");
+      expect(panel.render(100).at(-1)).toContain("copied 1 line");
+
+      source.watchCalls[0]?.onChange();
+      vi.advanceTimersByTime(150);
+      source.refreshCalls[1]?.value.resolve(snapshot());
+      await settle();
+      expect(panel.render(100).at(-1)).not.toContain("copied");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("tree resize retires stale preview selection", async () => {
+    const { panel } = await previewHarness(["alpha", "bravo"]);
+    panel.handleInput("\x1b[<0;34;2M");
+    panel.handleInput("\x1b[<32;38;2M");
+    panel.handleInput("\x1b[<0;38;2m");
+    expect(panel.render(100).at(-1)).toContain("copied 1 line");
+
+    panel.handleInput("[");
+    expect(panel.render(100).at(-1)).not.toContain("copied");
+  });
+
   test("a press on the divider drags the width instead of selecting text", async () => {
     const { panel, tui } = await previewHarness(["alpha", "bravo"]);
 
