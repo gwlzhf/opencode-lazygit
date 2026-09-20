@@ -40,10 +40,10 @@ describe("OpenCode selection", () => {
     expect(sliceByColumns("a界b", 1, 2)).toBe("界");
     expect(selectionText(["a界b  "], selection(0, 1, 0, 2), 6)).toBe("界");
   });
-  test("preserves tab indentation and treats joined emoji as one cell", () => {
+  test("preserves tab indentation and measures keycap graphemes as two columns", () => {
     expect(sanitizeCopiedText("\titem")).toBe("    item");
-    expect(visibleWidth("👩‍💻x")).toBe(3);
-    expect(selectionText(["👩‍💻x"], selection(0, 0, 0, 1), 4)).toBe("👩‍💻");
+    expect(visibleWidth("1️⃣x")).toBe(3);
+    expect(selectionText(["1️⃣x"], selection(0, 0, 0, 1), 4)).toBe("1️⃣");
   });
 
   test("exposes inclusive spans for native styling", () => {

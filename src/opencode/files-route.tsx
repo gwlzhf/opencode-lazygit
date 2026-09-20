@@ -40,6 +40,7 @@ import {
   selectedSpans,
   selectionText,
   sliceByColumns,
+  visibleWidth,
   type PreviewSelection,
   type SelectionPoint,
   type SelectionSpan,
@@ -188,7 +189,75 @@ export function createFilesRouteBindings(handleKey: (key: string) => void) {
   ];
 }
 
+export interface FilesRouteInputContext {
+  readonly getController: () => ReviewController | undefined;
+  readonly isDisposed: () => boolean;
+  readonly width: () => number;
+  readonly viewportHeight: () => number;
+  readonly clearSelection: () => void;
+  readonly scrollPreview: (delta: number) => void;
+  readonly focusTreeOrClose: () => void;
+}
+export function createFilesRouteKeyHandler(context: FilesRouteInputContext): (key: string) => void {
+  return (key: string): void => {
+    const active = context.getController();
+    const state = active?.state;
+    if (context.isDisposed() || active === undefined || state === undefined) return;
+    if (key === "f5" || key === "r") { context.clearSelection(); active.refresh(); return; }
+    if (key === "tab" || key === "shift+tab") {
+      if (state.treeCollapsed) { context.clearSelection(); active.setTreeCollapsed(false); } else active.toggleFocus();
+      return;
+    }
+    if (key === "\\" || key === "ctrl+b") { context.clearSelection(); active.setTreeCollapsed(!state.treeCollapsed); return; }
+    if (key === "d") { context.clearSelection(); active.toggleDiffLayout(); return; }
+    if (key === "c") { context.clearSelection(); active.cycleDiffContext(); return; }
+    if (key === "[" || key === "ctrl+left") { active.resizeTree(-1, context.width()); return; }
+    if (key === "]" || key === "ctrl+right") { active.resizeTree(1, context.width()); return; }
+    if (key === "g") { context.clearSelection(); active.toggleLeftMode(); return; }
+    if (state.focus === "preview") {
+      if (key === "left" || key === "h") active.focusTree();
+      else if (key === "home") { active.scrollPreviewHome(context.viewportHeight()); context.clearSelection(); }
+      else if (key === "end") { active.scrollPreviewEnd(context.viewportHeight()); context.clearSelection(); }
+      else if (key === "up" || key === "k") context.scrollPreview(-1);
+      else if (key === "down" || key === "j") context.scrollPreview(1);
+      else if (key === "pageup") context.scrollPreview(-context.viewportHeight());
+      else if (key === "pagedown") context.scrollPreview(context.viewportHeight());
+      return;
+    }
+    if (state.leftMode === "log") {
+      if (key === "up" || key === "k") active.movePrimarySelection(-1);
+      else if (key === "down" || key === "j") active.movePrimarySelection(1);
+      else if (key === "enter" || key === "right" || key === "l") active.focusPreview();
+      return;
+    }
+    if (key === "a" && state.leftMode === "files") { context.clearSelection(); active.setViewMode("all"); return; }
+    if (key === "m" && state.leftMode === "files") { context.clearSelection(); active.setViewMode("modified"); return; }
+    if (key === "s" && state.leftMode === "files") { context.clearSelection(); active.toggleScope(); return; }
+    if (key === "up" || key === "k") { context.clearSelection(); active.movePrimarySelection(-1); return; }
+    if (key === "down" || key === "j") { context.clearSelection(); active.movePrimarySelection(1); return; }
+    if (key === "left" || key === "h") { context.clearSelection(); active.collapseOrParent(); return; }
+    if (key === "right" || key === "l") {
+      context.clearSelection();
+      const selected = state.rows[state.selectedIndex];
+      if (selected?.node.kind === "file") active.focusPreview(); else active.expandOrChild();
+      return;
+    }
+    if (key === "enter") { context.clearSelection(); active.openSelection(); }
+  };
+}
+
+export type FilesRouteMouseTarget = "divider" | "tree" | "preview" | "ignore";
+
+export function filesRouteMouseTarget(event: MouseEvent, state: ReviewControllerState, width: number): FilesRouteMouseTarget {
+  const wide = isWide(width, state);
+  const left = wide ? treeWidth(width, state.treeRatio) : 0;
+  if (wide && event.x === left) return "divider";
+  if (wide && event.x < left || !wide && state.focus === "tree") return "tree";
+  if (!wide && state.focus !== "preview") return "ignore";
+  return "preview";
+}
 export function FilesRoute(props: FilesRouteProps) {
+
   const dimensions = useTerminalDimensions();
   const [revision, setRevision] = createSignal(0);
   let controller: ReviewController | undefined;
@@ -227,85 +296,16 @@ export function FilesRoute(props: FilesRouteProps) {
     if (active?.state.focus === "preview") active.focusTree();
     else props.onClose();
   };
+  const handleKey = createFilesRouteKeyHandler({
+    getController: () => controller,
+    isDisposed: () => disposed,
+    width: () => dimensions().width,
+    viewportHeight,
+    clearSelection,
+    scrollPreview,
+    focusTreeOrClose,
+  });
 
-  const handleKey = (key: string): void => {
-    const active = controller;
-    const state = active?.state;
-    if (disposed || active === undefined || state === undefined) return;
-    if (key === "escape") {
-      focusTreeOrClose();
-      return;
-    }
-    if (key === "f5" || key === "r") {
-      clearSelection();
-      active.refresh();
-      return;
-    }
-    if (key === "tab" || key === "shift+tab") {
-      if (state.treeCollapsed) {
-        clearSelection();
-        active.setTreeCollapsed(false);
-      } else active.toggleFocus();
-      return;
-    }
-    if (key === "\\" || key === "ctrl+b") {
-      clearSelection();
-      active.setTreeCollapsed(!state.treeCollapsed);
-      return;
-    }
-    if (key === "d") {
-      clearSelection();
-      active.toggleDiffLayout();
-      return;
-    }
-    if (key === "c") {
-      clearSelection();
-      active.cycleDiffContext();
-      return;
-    }
-    if (key === "[" || key === "ctrl+left") {
-      active.resizeTree(-1, dimensions().width);
-      return;
-    }
-    if (key === "]" || key === "ctrl+right") {
-      active.resizeTree(1, dimensions().width);
-      return;
-    }
-    if (key === "g") {
-      clearSelection();
-      active.toggleLeftMode();
-      return;
-    }
-    if (state.focus === "preview") {
-      if (key === "left" || key === "h") active.focusTree();
-      else if (key === "home") { active.scrollPreviewHome(viewportHeight()); clearSelection(); }
-      else if (key === "end") { active.scrollPreviewEnd(viewportHeight()); clearSelection(); }
-      else if (key === "up" || key === "k") scrollPreview(-1);
-      else if (key === "down" || key === "j") scrollPreview(1);
-      else if (key === "pageup") scrollPreview(-viewportHeight());
-      else if (key === "pagedown") scrollPreview(viewportHeight());
-      return;
-    }
-    if (state.leftMode === "log") {
-      if (key === "up" || key === "k") active.movePrimarySelection(-1);
-      else if (key === "down" || key === "j") active.movePrimarySelection(1);
-      else if (key === "enter" || key === "right" || key === "l") active.focusPreview();
-      return;
-    }
-    if (key === "m" && state.leftMode === "files") { clearSelection(); active.setViewMode("modified"); return; }
-    if (key === "s" && state.leftMode === "files") { clearSelection(); active.toggleScope(); return; }
-    if (key === "up" || key === "k") { clearSelection(); active.movePrimarySelection(-1); return; }
-    if (key === "down" || key === "j") { clearSelection(); active.movePrimarySelection(1); return; }
-    if (key === "left" || key === "h") { clearSelection(); active.collapseOrParent(); return; }
-    if (key === "right" || key === "l") {
-      clearSelection();
-      const selected = state.rows[state.selectedIndex];
-      if (selected?.node.kind === "file") active.focusPreview();
-      else active.expandOrChild();
-      return;
-    }
-    if (key === "enter") { clearSelection(); active.openSelection(); }
-  };
   useBindings(() => ({
     priority: 100,
     bindings: createFilesRouteBindings(handleKey),
@@ -346,17 +346,21 @@ export function FilesRoute(props: FilesRouteProps) {
     const state = active?.state;
     if (disposed || active === undefined || state === undefined) return;
     const width = dimensions().width;
-    const wide = isWide(width, state);
-    const left = wide ? treeWidth(width, state.treeRatio) : 0;
+    const target = filesRouteMouseTarget(event, state, width);
     const bodyRow = event.y - BODY_TOP;
-    if (wide && event.x < left || !wide && state.focus === "tree") {
+    if (target === "divider") {
+      clearSelection();
+      dividerDrag = true;
+      return;
+    }
+    if (target === "tree") {
       clearSelection();
       active.focusTree();
       const index = (state.leftMode === "log" ? logOffset : treeOffset) + bodyRow;
       active.selectPrimary(index);
       return;
     }
-    if (!wide && state.focus !== "preview") return;
+    if (target === "ignore") return;
     const point = previewPoint(event, state, width);
     if (point === undefined) return;
     active.focusPreview();
@@ -412,22 +416,28 @@ export function FilesRoute(props: FilesRouteProps) {
   };
 
   const previewLineText = (line: PreviewLine): string => line.right === undefined ? line.text : `${line.text}  │  ${line.right.text}`;
-
   const renderTextLine = (line: PreviewLine, index: number, width: number) => {
     const text = previewLineText(line);
     const span = selection === undefined ? undefined : selectedSpans(selection, index + 1, width).find(item => item.row === index);
+    const theme = props.api.theme.current;
+    if (line.right !== undefined) {
+      const separator = "  │  ";
+      const leftSelected = span !== undefined && span.from < visibleWidth(line.text) && span.to > 0;
+      const rightStart = visibleWidth(line.text) + visibleWidth(separator);
+      const rightSelected = span !== undefined && span.to > rightStart;
+      return <text>
+        <span style={{ fg: diffColor(line.kind, theme), bg: leftSelected ? theme.backgroundElement : undefined }}>{safeText(line.text)}</span>
+        <span style={{ fg: theme.diffContext }}>{separator}</span>
+        <span style={{ fg: diffColor(line.right.kind, theme), bg: rightSelected ? theme.backgroundElement : undefined }}>{safeText(line.right.text)}</span>
+      </text>;
+    }
     const [before, selected, after] = selectionPieces(text, span, width);
     if (span !== undefined) return <text>
-      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{before}</span>
-      <span style={{ fg: props.api.theme.current.selectedListItemText, bg: props.api.theme.current.backgroundElement }}>{selected}</span>
-      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{after}</span>
+      <span style={{ fg: diffColor(line.kind, theme) }}>{before}</span>
+      <span style={{ fg: theme.selectedListItemText, bg: theme.backgroundElement }}>{selected}</span>
+      <span style={{ fg: diffColor(line.kind, theme) }}>{after}</span>
     </text>;
-    if (line.right === undefined) return <text content={safeText(text)} fg={diffColor(line.kind, props.api.theme.current)} />;
-    return <text>
-      <span style={{ fg: diffColor(line.kind, props.api.theme.current) }}>{safeText(line.text)}</span>
-      <span style={{ fg: props.api.theme.current.diffContext }}>  │  </span>
-      <span style={{ fg: diffColor(line.right.kind, props.api.theme.current) }}>{safeText(line.right.text)}</span>
-    </text>;
+    return <text content={safeText(text)} fg={diffColor(line.kind, theme)} />;
   };
 
   const renderPreview = (state: ReviewControllerState | undefined, width: number) => {

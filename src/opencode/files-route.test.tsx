@@ -10,8 +10,9 @@ import { createRoot } from "solid-js/dist/solid.js";
 import type { TuiPluginApi, TuiThemeCurrent } from "@opencode-ai/plugin/tui";
 import type { FilePreview, ProjectSnapshot, ReviewSource } from "../contracts";
 import { DEFAULT_PANEL_SETTINGS, type PanelSettings, type PanelSettingsStore } from "../settings";
-import { createFilesRouteBindings, FilesRoute } from "./files-route";
-
+import type { ReviewControllerState } from "../ui/review-controller";
+import type { ReviewController } from "../ui/review-controller";
+import { createFilesRouteBindings, createFilesRouteKeyHandler, filesRouteMouseTarget, FilesRoute } from "./files-route";
 const theme = {
   primary: RGBA.fromHex("#ff00ff"), secondary: RGBA.fromHex("#aaaaaa"), accent: RGBA.fromHex("#00ffff"),
   error: RGBA.fromHex("#ff0000"), warning: RGBA.fromHex("#ffff00"), success: RGBA.fromHex("#00ff00"), info: RGBA.fromHex("#00aaff"),
@@ -114,15 +115,52 @@ describe("FilesRoute", () => {
     narrow.setup.renderer.destroy();
   });
   
-  test("registers route mode and all keyboard bindings without Pi palette cycling", async () => {
+  test("registered bindings dispatch route keyboard behavior through the production handler", async () => {
     const mounted = await mount(100, 20, controlledSource());
     expect(mounted.modePushes).toContain("pi-lazygit.files");
-    const keys = new Set(createFilesRouteBindings(() => undefined).map(binding => binding.key));
-    for (const key of ["up", "down", "left", "right", "j", "k", "h", "l", "enter", "tab", "shift+tab", "[", "]", "ctrl+left", "ctrl+right", "\\", "ctrl+b", "d", "c", "m", "a", "s", "g", "f5", "r", "pageup", "pagedown", "home", "end", "escape"]) expect(keys.has(key)).toBe(true);
-    expect(keys.has("t")).toBe(false);
+    const calls: string[] = [];
+    const state = {
+      focus: "tree", leftMode: "files", treeCollapsed: false, rows: [], selectedIndex: 0,
+    };
+    const fake = {
+      state,
+      setViewMode: (mode: string) => calls.push(`mode:${mode}`),
+      movePrimarySelection: (delta: number) => calls.push(`move:${delta}`),
+      toggleFocus: () => calls.push("focus"),
+      resizeTree: (delta: number) => calls.push(`resize:${delta}`),
+      toggleLeftMode: () => calls.push("history"),
+      focusPreview: () => { state.focus = "preview"; calls.push("preview"); },
+      focusTree: () => { state.focus = "tree"; calls.push("tree"); },
+      setTreeCollapsed: () => calls.push("collapsed"),
+      toggleDiffLayout: () => calls.push("diff"),
+      cycleDiffContext: () => calls.push("context"),
+      toggleScope: () => calls.push("scope"),
+      collapseOrParent: () => calls.push("parent"),
+      expandOrChild: () => calls.push("child"),
+      openSelection: () => calls.push("open"),
+      refresh: () => calls.push("refresh"),
+      scrollPreviewHome: () => calls.push("home"),
+      scrollPreviewEnd: () => calls.push("end"),
+      scrollPreview: () => calls.push("scroll"),
+    } as unknown as ReviewController;
+    const handler = createFilesRouteKeyHandler({
+      getController: () => fake,
+      isDisposed: () => false,
+      width: () => 100,
+      viewportHeight: () => 10,
+      clearSelection: () => undefined,
+      scrollPreview: () => calls.push("scroll"),
+      focusTreeOrClose: () => calls.push("escape"),
+    });
+    const bindings = createFilesRouteBindings(handler);
+    const invoke = (key: string): void => bindings.find(binding => binding.key === key)?.cmd();
+    invoke("a"); invoke("down"); invoke("tab"); invoke("]");
+    expect(calls).toEqual(["mode:all", "move:1", "focus", "resize:1"]);
+    state.leftMode = "log";
+    invoke("g"); invoke("up"); invoke("enter");
+    expect(calls.slice(-3)).toEqual(["history", "move:-1", "preview"]);
     mounted.setup.renderer.destroy();
   });
-
   test("cleanup aborts source work and flushes settings", async () => {
     const source = controlledSource();
     const mounted = await mount(100, 20, source);
@@ -132,6 +170,30 @@ describe("FilesRoute", () => {
     expect(source.signals.some(signal => signal.aborted)).toBe(true);
     expect(source.signals.length).toBe(signalCount);
     expect(mounted.settings.flushed()).toBe(1);
+  });
+  test("copies preview mouse selections through OSC52 and warns on failure", async () => {
+    const mounted = await mount(100, 20, controlledSource());
+    await mounted.setup.waitForFrame(frame => frame.includes("const 界 = true;"));
+    let copied = "";
+    const renderer = mounted.setup.renderer as unknown as { copyToClipboardOSC52: (text: string) => boolean };
+    renderer.copyToClipboardOSC52 = text => { copied = text; return true; };
+    await mounted.setup.mockMouse.drag(55, 2, 66, 2);
+    expect(copied).toContain("const");
+    renderer.copyToClipboardOSC52 = () => false;
+    await mounted.setup.mockMouse.drag(55, 2, 66, 2);
+    expect(mounted.toasts.some(toast => typeof toast === "object" && toast !== null && "message" in toast && toast.message === "Terminal clipboard copy is unavailable.")).toBe(true);
+    mounted.setup.renderer.destroy();
+  });
+
+  test("production mouse target helper routes divider, tree, and preview panes", () => {
+    const state: { focus: "tree" | "preview"; treeRatio: number } = { focus: "tree", treeRatio: 0.3 };
+    const routeState = state as unknown as ReviewControllerState;
+    const mouse = (x: number) => ({ x, y: 2 } as never);
+    expect(filesRouteMouseTarget(mouse(0), routeState, 100)).toBe("tree");
+    state.focus = "preview";
+    expect(filesRouteMouseTarget(mouse(99), routeState, 100)).toBe("preview");
+    const divider = Array.from({ length: 100 }, (_, x) => x).find(x => filesRouteMouseTarget(mouse(x), routeState, 100) === "divider");
+    expect(divider).toBeDefined();
   });
 
 });

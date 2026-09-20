@@ -93,32 +93,46 @@ interface CharacterCell {
   readonly to: number;
 }
 
+type GraphemeSegmenter = {
+  segment(text: string): Iterable<{ readonly segment: string }>;
+};
+
+const segmenter = (() => {
+  const intlRuntime = Intl as unknown as {
+    Segmenter?: new (locales?: string | string[], options?: { granularity: "grapheme" }) => GraphemeSegmenter;
+  };
+  const ctor = intlRuntime.Segmenter;
+  return ctor === undefined ? undefined : new ctor(undefined, { granularity: "grapheme" });
+})();
+function graphemes(text: string): readonly string[] {
+  if (segmenter === undefined) return Array.from(text);
+  return Array.from(segmenter.segment(text), item => item.segment);
+}
+
+function graphemeWidth(grapheme: string): number {
+  const codePoints = Array.from(grapheme, character => character.codePointAt(0) ?? 0);
+  const emoji = codePoints.some(codePoint => codePoint >= 0x1f000 && codePoint <= 0x1faff);
+  const keycap = codePoints.includes(0x20e3);
+  const emojiPresentation = codePoints.includes(0xfe0f) && codePoints.some(codePoint => codePoint >= 0x2300);
+  const regionalPair = codePoints.filter(codePoint => codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff).length >= 2;
+  if (emoji || keycap || emojiPresentation || regionalPair) return 2;
+  return codePoints.reduce((width, codePoint) => width + codePointWidth(codePoint), 0);
+}
+
 function cells(text: string): readonly CharacterCell[] {
   const result: CharacterCell[] = [];
   let column = 0;
-  for (let index = 0; index < text.length;) {
-    const codePoint = text.codePointAt(index) ?? 0;
-    const character = String.fromCodePoint(codePoint);
-    const width = codePointWidth(codePoint);
-    const next = index + character.length;
-    if (width === 0 && result.length > 0) {
-      const previous = result[result.length - 1]!;
-      result[result.length - 1] = { ...previous, text: previous.text + character };
-    } else if (width > 0 && result.length > 0) {
-      const previous = result[result.length - 1]!;
-      const previousCodePoint = previous.text.codePointAt(previous.text.length - 1) ?? 0;
-      const joined = previous.text.endsWith("\u200d")
-        || (previousCodePoint >= 0x1f1e6 && previousCodePoint <= 0x1f1ff && codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff);
-      if (joined) result[result.length - 1] = { ...previous, text: previous.text + character, to: previous.from + 2 };
-      else {
-        result.push({ text: character, from: column, to: column + width });
-        column += width;
+  for (const grapheme of graphemes(text)) {
+    const width = graphemeWidth(grapheme);
+    if (width <= 0) {
+      if (result.length > 0) {
+        const previous = result[result.length - 1]!;
+        result[result.length - 1] = { ...previous, text: previous.text + grapheme };
       }
-    } else if (width > 0) {
-      result.push({ text: character, from: column, to: column + width });
-      column += width;
+      continue;
     }
-    index = next;
+    result.push({ text: grapheme, from: column, to: column + width });
+    column += width;
   }
   return result;
 }
