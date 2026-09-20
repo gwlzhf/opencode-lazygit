@@ -35,7 +35,7 @@ function settingsStore() {
   return store;
 }
 
-function api(directory = "/workspace") {
+function api(directory = "/workspace", renderOnNavigate = false) {
   const layers: unknown[] = [];
   const routes: unknown[] = [];
   const navigations: Array<{ name: string; params?: Record<string, unknown> }> = [];
@@ -57,6 +57,12 @@ function api(directory = "/workspace") {
         navigate: (name: string, params?: Record<string, unknown>) => {
           navigations.push({ name, ...(params === undefined ? {} : { params }) });
           (value.api.route.current as { name: string }).name = name;
+          if (renderOnNavigate && name === FILES_ROUTE) {
+            const definition = routes.find(candidate => typeof candidate === "object" && candidate !== null && "render" in candidate);
+            if (definition !== undefined && typeof definition === "object" && definition !== null && "render" in definition && typeof definition.render === "function") {
+              definition.render();
+            }
+          }
         },
       },
       theme: { current: { error: "error" } },
@@ -168,6 +174,21 @@ describe("OpenCode TUI plugin", () => {
     expect(route.render()).toBeTruthy();
     expect(host.navigations).toEqual([{ name: "home" }]);
     expect(host.toasts).toEqual([{ variant: "error", message: "Unable to open files review: render failed" }]);
+  });
+
+  test("reopens after synchronous route construction failure", async () => {
+    const host = api("/workspace", true);
+    const setup = dependencies({ renderFilesRoute: () => { throw new Error("render failed"); } });
+    await activate(host.api, setup.value);
+    const command = (host.layers[0] as { commands: Array<{ run: () => Promise<void> }> }).commands[0];
+    await command.run();
+    await command.run();
+    expect(host.navigations).toEqual([
+      { name: FILES_ROUTE },
+      { name: "home" },
+      { name: FILES_ROUTE },
+      { name: "home" },
+    ]);
   });
 
   test("flushes settings and clears baselines exactly once on lifecycle disposal", async () => {

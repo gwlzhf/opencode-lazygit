@@ -98,8 +98,13 @@ export function createOpenCodePlugin(
       }
       await ensureBaseline(cwd);
       if (!disposed && !routeOpened && api.route.current.name !== FILES_ROUTE) {
-        api.route.navigate(FILES_ROUTE);
         routeOpened = true;
+        try {
+          api.route.navigate(FILES_ROUTE);
+        } catch (error) {
+          routeOpened = false;
+          throw error;
+        }
       }
     };
 
