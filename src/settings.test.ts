@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as nodePath from "node:path";
-import { clampTreeRatio, createPanelSettingsStore, DEFAULT_PANEL_SETTINGS } from "./settings";
+import {
+  clampTreeRatio,
+  DEFAULT_PANEL_SETTINGS,
+  normalizePanelSettings,
+} from "./settings";
+import { createPanelSettingsStore } from "./pi-settings";
 
 const temporaryRoots: string[] = [];
 
@@ -26,6 +31,22 @@ describe("clampTreeRatio", () => {
     expect(clampTreeRatio(Number.NaN)).toBeUndefined();
     expect(clampTreeRatio("0.2")).toBeUndefined();
     expect(clampTreeRatio(undefined)).toBeUndefined();
+  });
+});
+
+test("normalizePanelSettings independently falls back malformed fields", () => {
+  expect(normalizePanelSettings({
+    treeRatio: 0.9,
+    treeCollapsed: "yes",
+    highlightTheme: "nord",
+    diffLayout: "split",
+    diffContext: 25,
+  })).toEqual({
+    ...DEFAULT_PANEL_SETTINGS,
+    treeRatio: 0.3,
+    highlightTheme: "nord",
+    diffLayout: "split",
+    diffContext: 25,
   });
 });
 

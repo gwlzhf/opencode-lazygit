@@ -46,7 +46,7 @@ import {
   visiblePaths,
 } from "../model/tree";
 import { parseUnifiedDiff } from "./diff-view";
-import { type HighlightThemeName, DEFAULT_HIGHLIGHT_THEME } from "./highlight";
+import { type HighlightThemeName, DEFAULT_HIGHLIGHT_THEME } from "../highlight-theme";
 
 export type PanelFocus = "tree" | "preview";
 export type LeftMode = "files" | "log";

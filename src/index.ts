@@ -8,7 +8,8 @@ import {
   createReviewSource,
   prepareSessionBaseline,
 } from "./review-source";
-import { createPanelSettingsStore, type PanelSettingsStore } from "./settings";
+import type { PanelSettingsStore } from "./settings";
+import { createPanelSettingsStore } from "./pi-settings";
 import { FilesPanel, type FilesPanelOptions } from "./ui/files-panel";
 import { loadHighlighter, type Highlighter } from "./ui/highlight";
 

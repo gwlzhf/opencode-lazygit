@@ -9,25 +9,21 @@
  */
 
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
+import {
+  DEFAULT_HIGHLIGHT_THEME,
+  getHighlightThemeLabel,
+  HIGHLIGHT_THEMES,
+  isHighlightThemeName,
+  type HighlightThemeName,
+} from "../highlight-theme";
 
-export const HIGHLIGHT_THEMES = [
-  { name: "pi", label: "Pi", ompName: undefined },
-  { name: "catppuccin", label: "Catppuccin", ompName: "dark-catppuccin" },
-  { name: "nord", label: "Nord", ompName: "dark-nord" },
-  { name: "tokyo-night", label: "Tokyo Night", ompName: "dark-tokyo-night" },
-] as const;
-
-export type HighlightThemeName = (typeof HIGHLIGHT_THEMES)[number]["name"];
-
-export const DEFAULT_HIGHLIGHT_THEME: HighlightThemeName = "pi";
-
-export function getHighlightThemeLabel(name: HighlightThemeName): string {
-  return HIGHLIGHT_THEMES.find(theme => theme.name === name)?.label ?? name;
-}
-
-export function isHighlightThemeName(value: unknown): value is HighlightThemeName {
-  return HIGHLIGHT_THEMES.some(theme => theme.name === value);
-}
+export {
+  DEFAULT_HIGHLIGHT_THEME,
+  getHighlightThemeLabel,
+  HIGHLIGHT_THEMES,
+  isHighlightThemeName,
+};
+export type { HighlightThemeName };
 
 /**
  * Highlight `code` for the language implied by `path`, returning one entry per
