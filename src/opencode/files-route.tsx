@@ -203,6 +203,7 @@ export function createFilesRouteKeyHandler(context: FilesRouteInputContext): (ke
     const active = context.getController();
     const state = active?.state;
     if (context.isDisposed() || active === undefined || state === undefined) return;
+    if (key === "f5" || key === "r") { context.clearSelection(); active.refresh(); return; }
     if (key === "escape") { context.focusTreeOrClose(); return; }
     if (key === "tab" || key === "shift+tab") {
       if (state.treeCollapsed) { context.clearSelection(); active.setTreeCollapsed(false); } else active.toggleFocus();

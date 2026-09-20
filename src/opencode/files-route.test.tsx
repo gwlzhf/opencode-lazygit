@@ -156,8 +156,8 @@ describe("FilesRoute", () => {
     });
     const bindings = createFilesRouteBindings(handler);
     const invoke = (key: string): void => bindings.find(binding => binding.key === key)?.cmd();
-    invoke("a"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
-    expect(calls).toEqual(["mode:all", "move:1", "focus", "resize:1", "close"]);
+    invoke("r"); invoke("a"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
+    expect(calls).toEqual(["refresh", "mode:all", "move:1", "focus", "resize:1", "close"]);
     state.focus = "preview";
     invoke("escape");
     expect(calls.at(-1)).toBe("tree");
@@ -242,6 +242,7 @@ describe("FilesRoute", () => {
     handlers.onMouseDown(mouse(dividerColumn));
     handlers.onMouseDrag(mouse(dividerColumn + 3));
     handlers.onMouseUp();
+    expect(calls).toContain(`resize:${dividerColumn + 3}`);
     handlers.onMouseDown(mouse(dividerColumn + 2));
     handlers.onMouseDrag(mouse(dividerColumn + 8));
     handlers.onMouseUp();
