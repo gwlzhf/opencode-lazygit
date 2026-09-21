@@ -305,6 +305,10 @@ describe("FilesPanel state machine", () => {
 
     // The cursor starts on the first file and steps over the dividers.
     expect(source.previewCalls.at(-1)?.path).toBe("src/a.ts");
+    panel.handleInput("n");
+    expect(source.previewCalls.at(-1)?.path).toBe("notes.txt");
+    panel.handleInput("p");
+    expect(source.previewCalls.at(-1)?.path).toBe("src/a.ts");
     panel.handleInput("j");
     expect(source.previewCalls.at(-1)?.path).toBe("notes.txt");
     panel.handleInput("k");

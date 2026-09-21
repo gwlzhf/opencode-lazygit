@@ -61,6 +61,7 @@ export type ListLayout = "tree" | "changes";
 export interface ReviewControllerState {
   readonly revision: number;
   readonly leftMode: LeftMode;
+  readonly listLayout: ListLayout;
   readonly viewMode: ViewMode;
   readonly listLayout: ListLayout;
   readonly scope: ChangeScope;
@@ -140,6 +141,7 @@ export class ReviewController {
   readonly #onChange: () => void;
 
   #leftMode: LeftMode = "files";
+  #listLayout: ListLayout = "tree";
   #viewMode: ViewMode = "modified";
   #listLayout: ListLayout = "tree";
   #scope: ChangeScope = "workspace";
@@ -214,6 +216,7 @@ export class ReviewController {
     return {
       revision: this.#revision,
       leftMode: this.#leftMode,
+      listLayout: this.#listLayout,
       viewMode: this.#viewMode,
       listLayout: this.#listLayout,
       scope: this.#scope,
@@ -561,7 +564,7 @@ export class ReviewController {
       return;
     }
     const selected = this.#selectedRow();
-    if (selected === undefined) return;
+    if (selected === undefined || selected.node.kind === "section") return;
     if (selected.node.kind === "directory") {
       if (selected.expanded) this.collapseOrParent();
       else this.expandOrChild();
