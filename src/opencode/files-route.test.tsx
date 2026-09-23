@@ -264,13 +264,14 @@ toggleListLayout: () => calls.push("list-layout"),
     expect(["n", "p", "b", "?"].every(key => bindings.some(binding => binding.key === key))).toBe(true);
     const invoke = (key: string): void => bindings.find(binding => binding.key === key)?.cmd();
     invoke("r"); invoke("a"); invoke("v"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
-    expect(calls).toEqual(["refresh", "mode:all", "list", "move:1", "focus", "resize:1", "close"]);
+    expect(calls).toEqual(["refresh", "mode:all", "list-layout", "move:1", "focus", "resize:1", "close"]);
     state.focus = "preview";
     invoke("escape");
     expect(calls.at(-1)).toBe("tree");
 
+    const beforeSecondSequence = calls.length;
     invoke("r"); invoke("a"); invoke("down"); invoke("tab"); invoke("]"); invoke("escape");
-    expect(calls.slice(0, 6)).toEqual(["refresh", "mode:all", "move:1", "focus", "resize:1", "close"]);
+    expect(calls.slice(beforeSecondSequence)).toEqual(["refresh", "mode:all", "move:1", "focus", "resize:1", "close"]);
 
     state.focus = "tree";
     state.leftMode = "files";

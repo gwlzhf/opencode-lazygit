@@ -63,7 +63,6 @@ export interface ReviewControllerState {
   readonly leftMode: LeftMode;
   readonly listLayout: ListLayout;
   readonly viewMode: ViewMode;
-  readonly listLayout: ListLayout;
   readonly scope: ChangeScope;
   readonly focus: PanelFocus;
   readonly snapshot: ProjectSnapshot | undefined;
@@ -143,7 +142,6 @@ export class ReviewController {
   #leftMode: LeftMode = "files";
   #listLayout: ListLayout = "tree";
   #viewMode: ViewMode = "modified";
-  #listLayout: ListLayout = "tree";
   #scope: ChangeScope = "workspace";
   #focus: PanelFocus;
   #snapshot: ProjectSnapshot | undefined;
@@ -218,7 +216,6 @@ export class ReviewController {
       leftMode: this.#leftMode,
       listLayout: this.#listLayout,
       viewMode: this.#viewMode,
-      listLayout: this.#listLayout,
       scope: this.#scope,
       focus: this.#focus,
       snapshot: this.#snapshot,

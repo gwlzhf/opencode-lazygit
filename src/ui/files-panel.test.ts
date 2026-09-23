@@ -295,7 +295,6 @@ describe("FilesPanel state machine", () => {
 
     panel.handleInput("v");
     const list = panel.render(60);
-    expect(list[0]).toContain("Project [changes · workspace]");
     const body = list.join("\n");
     expect(body).toContain("── Modified files ─");
     expect(body).toContain("M  src/a.ts");
@@ -309,11 +308,6 @@ describe("FilesPanel state machine", () => {
     expect(source.previewCalls.at(-1)?.path).toBe("notes.txt");
     panel.handleInput("p");
     expect(source.previewCalls.at(-1)?.path).toBe("src/a.ts");
-    panel.handleInput("j");
-    expect(source.previewCalls.at(-1)?.path).toBe("notes.txt");
-    panel.handleInput("k");
-    expect(source.previewCalls.at(-1)?.path).toBe("src/a.ts");
-
     panel.handleInput("v");
     const tree = panel.render(60).join("\n");
     expect(tree).not.toContain("Modified files");

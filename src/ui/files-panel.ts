@@ -621,6 +621,8 @@ export class FilesPanel implements Component {
     if (state.snapshot?.kind === "filesystem") return "Project [filesystem]";
     const listing = this.#usesChangeList() ? "changes" : state.viewMode;
     return `Project [${listing} · ${state.scope}]`;
+  }
+
   #renderHelp(width: number, terminalRows: number): readonly string[] {
     const height = Math.max(0, terminalRows - 3);
     const lines: string[] = [];
@@ -748,6 +750,10 @@ export class FilesPanel implements Component {
   }
 
   #usesChangeList(): boolean {
+    const state = this.#state;
+    return state.listLayout === "changes" && state.snapshot?.kind === "git";
+  }
+
   #renderBranchRows(width: number, height: number): readonly string[] {
     const state = this.#state;
     if (state.branchLoading && state.branches === undefined) return [this.#theme.fg("accent", "Loading branches…")];
@@ -768,11 +774,6 @@ export class FilesPanel implements Component {
     const raw = `${cursor} ${marker} ${sanitizeTerminalText(branch.name).replaceAll("\n", " ")}${switching}`;
     if (selected && state.focus === "tree") return renderSelectedRow(raw, width, this.#theme);
     return this.#theme.fg(branch.current ? "success" : "text", fitCell(raw, width));
-  }
-
-  #renderTreeRow(row: TreeRow, index: number, width: number): string {
-    const state = this.#state;
-    return state.listLayout === "changes" && state.snapshot?.kind === "git";
   }
 
   #renderTreeRow(row: TreeRow, index: number, width: number): string {
